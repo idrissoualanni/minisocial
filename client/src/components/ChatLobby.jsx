@@ -9,6 +9,25 @@ import { getAvatarGradient, timeAgo } from "../utils";
 import CreateGroup from "./CreateGroup";
 import useStore from "../store";
 
+// ── Subscription: nouveaux messages pour unreadCount temps réel ──
+const MESSAGE_SENT_GLOBAL_SUB = gql`
+  subscription OnMessageSentGlobal {
+    messageSentGlobal {
+      id text read createdAt
+      sender { id name }
+      receiver { id name }
+    }
+  }
+`;
+
+const MESSAGE_READ_GLOBAL_SUB = gql`
+  subscription OnMessageReadGlobal($userId: ID!) {
+    messageRead(userId: $userId) {
+      messageId senderId receiverId
+    }
+  }
+`;
+
 const GET_PREVIEWS = gql`
   query GetPreviews($userId: ID!) {
     conversationPreviews(userId: $userId) {
@@ -130,6 +149,59 @@ export default function ChatLobby() {
   useSubscription(PERMISSION_SUB, {
     variables: { userId: currentUser?.id }, skip: !currentUser,
     onData: () => { refetchPending(); refetchPreviews(); },
+  });
+
+  // ── Temps réel: unreadCount se met à jour quand un message arrive ──
+  const { cache } = useApolloClient();
+  useSubscription(MESSAGE_SENT_GLOBAL_SUB, {
+    skip: !currentUser,
+    onData: ({ data: { data } }) => {
+      const msg = data?.messageSentToUser;
+      if (!msg) return;
+      // Incrémenter unreadCount dans le cache pour cette conversation
+      const senderId = String(msg.sender.id);
+      const receiverId = String(msg.receiver.id);
+      // Mettre à jour le preview correspondant dans GET_PREVIEWS
+      const existingData = cache.readQuery({
+        query: GET_PREVIEWS,
+        variables: { userId: currentUser?.id },
+      });
+      if (!existingData?.conversationPreviews) return;
+      cache.writeQuery({
+        query: GET_PREVIEWS,
+        variables: { userId: currentUser?.id },
+        data: {
+          conversationPreviews: existingData.conversationPreviews.map((p) => {
+            if (String(p.user.id) === senderId) {
+              return {
+                ...p,
+                unreadCount: (p.unreadCount || 0) + 1,
+                lastMessage: msg,
+              };
+            }
+            return p;
+          }),
+        },
+      });
+    },
+  });
+
+  // ── Temps réel: réinitialiser unreadCount quand on lit les messages ──
+  useSubscription(MESSAGE_READ_GLOBAL_SUB, {
+    variables: { userId: currentUser?.id },
+    skip: !currentUser,
+    onData: ({ data: { data } }) => {
+      const evt = data?.messageRead;
+      if (!evt) return;
+      // Si quelqu'un a lu nos messages, mettre à jour le preview
+      const existingData = cache.readQuery({
+        query: GET_PREVIEWS,
+        variables: { userId: currentUser?.id },
+      });
+      if (!existingData?.conversationPreviews) return;
+      // Note: on ne décrémente pas car unreadCount est du côté du receiver
+      // Le receiver voit son unreadCount diminuer quand IL lit
+    },
   });
 
   const previews = previewsData?.conversationPreviews || [];

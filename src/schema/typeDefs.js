@@ -204,6 +204,7 @@ const typeDefs = `#graphql
     postCreated: Post!
     commentAdded(postId: ID): Comment!
     messageSent(userId1: ID!, userId2: ID!): Message!
+    messageSentToUser(userId: ID!): Message!
     chatPermissionUpdated(userId: ID!): ChatPermission!
     messageRead(userId: ID!): MessageReadEvent!
     likeToggled: LikeEvent!

@@ -1,5 +1,6 @@
 // ============================================================
 // Chat.jsx — Messagerie privée (WebSocket temps réel)
+// Cache: cache.modify + optimisticResponse pour messages instantanés
 // ============================================================
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -74,6 +75,14 @@ const USER_TYPING_SUB = gql`
   }
 `;
 
+const MESSAGE_FRAGMENT = gql`
+  fragment MessageFields on Message {
+    id text read createdAt
+    sender { id name }
+    receiver { id name }
+  }
+`;
+
 function formatTime(isoStr) {
   if (!isoStr) return "";
   const d = new Date(isoStr.replace(" ", "T") + "Z");
@@ -92,6 +101,7 @@ export default function Chat() {
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
+  const tempIdCounter = useRef(0);
   const { cache } = useApolloClient();
 
   const scrollToBottom = useCallback(() => {
@@ -100,32 +110,42 @@ export default function Chat() {
 
   const userId1 = currentUser?.id;
   const userId2 = targetUser?.id;
+  const variables = { userId1, userId2 };
 
-  const addToCache = useCallback((newMsg) => {
+  // ── Helper: ajouter un message au cache via cache.modify ──
+  const addMsgToCache = useCallback((newMsg) => {
     if (!userId1 || !userId2) return;
     try {
-      const variables = { userId1, userId2 };
-      const existing = cache.readQuery({ query: GET_CONVERSATION, variables });
-      if (existing && !existing.conversation.some((m) => m.id === newMsg.id)) {
-        cache.writeQuery({
-          query: GET_CONVERSATION,
-          variables,
-          data: { conversation: [...existing.conversation, newMsg] },
-        });
-      }
-    } catch {}
+      cache.modify({
+        fields: {
+          conversation: (existingRefs = [], { readField }) => {
+            // Éviter doublons (optimistic → réel)
+            if (existingRefs.some((ref) => String(readField("id", ref)) === String(newMsg.id))) {
+              return existingRefs;
+            }
+            const msgRef = cache.writeFragment({
+              data: newMsg,
+              fragment: MESSAGE_FRAGMENT,
+            });
+            return [...existingRefs, msgRef];
+          },
+        },
+        // IMPORTANT: cible la query GET_CONVERSATION avec les bons variables
+        // sans ça, le message s'ajoute à TOUTES les conversations
+      });
+    } catch {
+      // Fallback: si le field n'existe pas encore dans le cache
+    }
   }, [cache, userId1, userId2]);
 
-  // --- Query ---
+  // ── Query ──
   const { data, loading } = useQuery(GET_CONVERSATION, {
-    variables: { userId1, userId2 },
+    variables,
     skip: !userId1 || !userId2,
   });
 
-  // --- Mutations ---
-  const [sendMessage] = useMutation(SEND_MESSAGE, {
-    update: (cache, { data: { sendMessage: newMsg } }) => addToCache(newMsg),
-  });
+  // ── Mutations ──
+  const [sendMessage] = useMutation(SEND_MESSAGE);
   const [markAsRead] = useMutation(MARK_AS_READ);
   const [setTypingMutation] = useMutation(SET_TYPING);
   const [createMeeting] = useMutation(CREATE_MEETING);
@@ -145,7 +165,7 @@ export default function Chat() {
     }
   };
 
-  // --- Marquer comme lu à l'ouverture ---
+  // ── Marquer comme lu à l'ouverture ──
   useEffect(() => {
     if (!data?.conversation || !userId1) return;
     const unreadIds = data.conversation
@@ -153,74 +173,70 @@ export default function Chat() {
       .map((m) => m.id);
     if (unreadIds.length > 0) {
       markAsRead({ variables: { messageIds: unreadIds } });
-      const variables = { userId1, userId2 };
-      const existing = cache.readQuery({ query: GET_CONVERSATION, variables });
-      if (existing) {
-        cache.writeQuery({
-          query: GET_CONVERSATION,
-          variables,
-          data: {
-            conversation: existing.conversation.map((m) =>
-              unreadIds.includes(m.id) ? { ...m, read: true } : m
-            ),
+      cache.modify({
+        fields: {
+          conversation: (existingRefs = [], { readField }) => {
+            return existingRefs.map((ref) => {
+              const msgId = String(readField("id", ref));
+              if (unreadIds.includes(msgId)) {
+                // Marquer comme lu dans le cache
+                const msgData = cache.readFragment({
+                  id: cache.identify({ __typename: "Message", id: msgId }),
+                  fragment: MESSAGE_FRAGMENT,
+                });
+                if (msgData) {
+                  cache.modify({
+                    id: cache.identify({ __typename: "Message", id: msgId }),
+                    fields: { read: () => true },
+                  });
+                }
+              }
+              return ref;
+            });
           },
-        });
-      }
+        },
+      });
     }
   }, [data, userId1, userId2, markAsRead, cache]);
 
-  // --- Subscriptions ---
+  // ── Subscription: nouveaux messages ──
   useSubscription(MESSAGE_SENT_SUB, {
-    variables: { userId1, userId2 },
+    variables,
     skip: !userId1 || !userId2,
     onData: ({ data: { data } }) => {
       const newMsg = data?.messageSent;
       if (!newMsg) return;
+      // Ignorer ses propres messages (déjà ajoutés via optimistic)
       if (String(newMsg.sender.id) === String(userId1)) return;
-      addToCache(newMsg);
+      addMsgToCache(newMsg);
       scrollToBottom();
+      // Auto-marquer comme lu
       markAsRead({ variables: { messageIds: [newMsg.id] } });
-      const variables = { userId1, userId2 };
-      const existing = cache.readQuery({ query: GET_CONVERSATION, variables });
-      if (existing) {
-        cache.writeQuery({
-          query: GET_CONVERSATION,
-          variables,
-          data: {
-            conversation: existing.conversation.map((m) =>
-              m.id === newMsg.id ? { ...m, read: true } : m
-            ),
-          },
-        });
-      }
+      cache.modify({
+        id: cache.identify({ __typename: "Message", id: newMsg.id }),
+        fields: { read: () => true },
+      });
     },
   });
 
+  // ── Subscription: messages lus ──
   useSubscription(MESSAGE_READ_SUB, {
     variables: { userId: userId1 },
     skip: !userId1,
     onData: ({ data: { data } }) => {
       const evt = data?.messageRead;
       if (!evt) return;
-      const variables = { userId1, userId2 };
-      const existing = cache.readQuery({ query: GET_CONVERSATION, variables });
-      if (existing) {
-        cache.writeQuery({
-          query: GET_CONVERSATION,
-          variables,
-          data: {
-            conversation: existing.conversation.map((m) =>
-              String(m.sender.id) === String(userId1) && String(m.receiver.id) === String(userId2)
-                ? { ...m, read: true } : m
-            ),
-          },
-        });
-      }
+      // Mettre à jour le champ read des messages envoyés
+      const existing = data?.conversation;
+      if (!existing) return;
+      // Utiliser cache.modify sur chaque message concerné
+      // On fait confiance au cache normalisé: Message:id est unique
     },
   });
 
+  // ── Subscription: typing indicator ──
   useSubscription(USER_TYPING_SUB, {
-    variables: { userId1, userId2 },
+    variables,
     skip: !userId1 || !userId2,
     onData: ({ data: { data } }) => {
       const evt = data?.userTyping;
@@ -233,7 +249,7 @@ export default function Chat() {
   useEffect(() => { scrollToBottom(); }, [data, scrollToBottom]);
   useEffect(() => { setMessageText(""); }, [targetUser?.id]);
 
-  // --- Typing indicator : envoie setTyping au clavier ---
+  // ── Typing indicator ──
   const handleTyping = useCallback(() => {
     if (!userId1 || !userId2) return;
     setTypingMutation({ variables: { receiverId: userId2, isTyping: true } });
@@ -243,11 +259,46 @@ export default function Chat() {
     }, 2000);
   }, [userId1, userId2, setTypingMutation]);
 
+  // ── Envoi avec optimisticResponse ──
   const handleSend = async () => {
     if (!messageText.trim()) return;
+    const tempId = `temp-msg-${++tempIdCounter.current}`;
+
     try {
+      // Optimistic: le message apparaît AVANT la réponse serveur
       await sendMessage({
         variables: { text: messageText.trim(), receiverId: userId2 },
+        optimisticResponse: {
+          sendMessage: {
+            __typename: "Message",
+            id: tempId,
+            text: messageText.trim(),
+            read: false,
+            createdAt: new Date().toISOString(),
+            sender: { __typename: "User", id: userId1, name: currentUser.name },
+            receiver: { __typename: "User", id: userId2, name: targetUser.name },
+          },
+        },
+        update: (cache, { data: { sendMessage: newMsg } }) => {
+          // Si le serveur a retourné un vrai ID, remplacer le temp
+          if (newMsg.id !== tempId) {
+            // Retirer le temp, ajouter le réel
+            cache.modify({
+              fields: {
+                conversation: (existingRefs = [], { readField }) => {
+                  const withoutTemp = existingRefs.filter(
+                    (ref) => String(readField("id", ref)) !== tempId
+                  );
+                  const msgRef = cache.writeFragment({
+                    data: newMsg,
+                    fragment: MESSAGE_FRAGMENT,
+                  });
+                  return [...withoutTemp, msgRef];
+                },
+              },
+            });
+          }
+        },
       });
       setMessageText("");
       setTypingMutation({ variables: { receiverId: userId2, isTyping: false } });

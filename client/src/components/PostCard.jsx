@@ -1,5 +1,6 @@
 // ============================================================
 // PostCard.jsx — Post avec édition, likes, commentaires threadés
+// Cache: cache.modify + optimisticResponse (pas de readQuery/map/writeQuery)
 // ============================================================
 
 import { useState } from "react";
@@ -64,42 +65,53 @@ export default function PostCard({ post }) {
   const [showCropModal, setShowCropModal] = useState(false);
   const { cache } = useApolloClient();
 
-  // --- Likes ---
   const likedByMe = currentUser && post.likes?.some((u) => String(u.id) === String(currentUser.id));
   const likeCount = post.likeCount || 0;
 
+  // ── LIKE: optimistic + cache.modify chirurgical ──
   const [toggleLike] = useMutation(TOGGLE_LIKE, {
+    optimisticResponse: {
+      toggleLike: !likedByMe,
+    },
     update: (cache, { data: { toggleLike: liked } }) => {
-      const existing = cache.readQuery({ query: GET_POSTS });
-      if (!existing) return;
-      cache.writeQuery({
-        query: GET_POSTS,
-        data: {
-          posts: existing.posts.map((p) => {
-            if (p.id !== post.id) return p;
-            const newCount = liked ? p.likeCount + 1 : p.likeCount - 1;
-            const newLikes = liked
-              ? [...(p.likes || []), currentUser]
-              : (p.likes || []).filter((u) => String(u.id) !== String(currentUser.id));
-            return { ...p, likeCount: newCount, likes: newLikes };
-          }),
+      // cache.modify cible directement l'objet Post:5 dans le cache
+      // Pas besoin de lire → mapper → réécrire toute la query GET_POSTS
+      const postId = cache.identify({ __typename: "Post", id: post.id });
+      cache.modify({
+        id: postId,
+        fields: {
+          likeCount: (existing = 0) => liked ? existing + 1 : existing - 1,
+          likes: (existingRefs = [], { readField }) => {
+            if (liked) {
+              // Ajouter une référence vers l'utilisateur courant
+              const userRef = cache.writeFragment({
+                data: { __typename: "User", id: currentUser.id, name: currentUser.name },
+                fragment: gql`fragment BriefUser on User { id name }`,
+              });
+              return [...existingRefs, userRef];
+            } else {
+              // Retirer la référence de l'utilisateur courant
+              return existingRefs.filter(
+                (ref) => String(readField("id", ref)) !== String(currentUser.id)
+              );
+            }
+          },
         },
       });
     },
   });
 
+  // ── LIKE subscription: met à jour le compteur si un autre like ──
   useSubscription(LIKE_TOGGLED, {
     onData: ({ data: { data } }) => {
       const evt = data?.likeToggled;
       if (!evt || String(evt.postId) !== String(post.id)) return;
-      const existing = cache.readQuery({ query: GET_POSTS });
-      if (!existing) return;
-      cache.writeQuery({
-        query: GET_POSTS,
-        data: {
-          posts: existing.posts.map((p) =>
-            String(p.id) === String(evt.postId) ? { ...p, likeCount: evt.likeCount } : p
-          ),
+      const postId = cache.identify({ __typename: "Post", id: post.id });
+      if (!postId) return;
+      cache.modify({
+        id: postId,
+        fields: {
+          likeCount: () => evt.likeCount,
         },
       });
     },
@@ -110,45 +122,83 @@ export default function PostCard({ post }) {
     await toggleLike({ variables: { postId: post.id } });
   };
 
-  // --- Commentaires ---
+  // ── COMMENTAIRE: optimistic + cache.modify ──
   const [addComment] = useMutation(ADD_COMMENT, {
+    optimisticResponse: {
+      addComment: {
+        __typename: "Comment",
+        id: `temp-comment-${Date.now()}`,
+        text: commentText.trim(),
+        createdAt: new Date().toISOString(),
+        parentId: replyTo ? replyTo.id : null,
+        author: { __typename: "User", id: currentUser.id, name: currentUser.name },
+        post: { __typename: "Post", id: post.id },
+      },
+    },
     update: (cache, { data: { addComment: newComment } }) => {
-      const existing = cache.readQuery({ query: GET_POSTS });
-      cache.writeQuery({
-        query: GET_POSTS,
-        data: {
-          posts: existing.posts.map((p) => {
-            if (p.id !== String(newComment.post.id)) return p;
-            if (p.comments.some((c) => c.id === newComment.id)) return p;
-            return { ...p, comments: [...p.comments, newComment] };
-          }),
+      const postId = cache.identify({ __typename: "Post", id: post.id });
+      cache.modify({
+        id: postId,
+        fields: {
+          comments: (existingRefs = [], { readField }) => {
+            // Éviter les doublons (optimistic → réel)
+            const exists = existingRefs.some(
+              (ref) => String(readField("id", ref)) === String(newComment.id)
+            );
+            if (exists) return existingRefs;
+            const commentRef = cache.writeFragment({
+              data: newComment,
+              fragment: gql`fragment NewComment on Comment {
+                id text createdAt parentId
+                author { id name }
+                post { id }
+              }`,
+            });
+            return [...existingRefs, commentRef];
+          },
         },
       });
     },
   });
 
+  // ── SUPPRESSION: cache.modify evict ──
   const [deletePost] = useMutation(DELETE_POST, {
-    update: (cache, { data: { deletePost: ok } }, { variables }) => {
-      if (!ok) return;
-      const existing = cache.readQuery({ query: GET_POSTS });
-      cache.writeQuery({
-        query: GET_POSTS,
-        data: { posts: existing.posts.filter((p) => p.id !== variables.id) },
+    optimisticResponse: { deletePost: true },
+    update: (cache) => {
+      // Retirer le post de la liste GET_POSTS
+      cache.modify({
+        fields: {
+          posts: (existingRefs = [], { readField }) => {
+            return existingRefs.filter(
+              (ref) => String(readField("id", ref)) !== String(post.id)
+            );
+          },
+        },
       });
     },
   });
 
+  // ── ÉDITION: optimistic + cache.modify ──
   const [updatePost] = useMutation(UPDATE_POST, {
+    optimisticResponse: {
+      updatePost: {
+        __typename: "Post",
+        id: post.id,
+        title: editTitle.trim(),
+        content: editContent.trim(),
+        imageUrl: editImageUrl,
+        createdAt: post.createdAt,
+        author: post.author,
+      },
+    },
     update: (cache, { data: { updatePost: updated } }) => {
-      const existing = cache.readQuery({ query: GET_POSTS });
-      cache.writeQuery({
-        query: GET_POSTS,
-        data: {
-          posts: existing.posts.map((p) =>
-            p.id === updated.id
-              ? { ...p, title: updated.title, content: updated.content, imageUrl: updated.imageUrl }
-              : p
-          ),
+      const postId = cache.identify({ __typename: "Post", id: post.id });
+      cache.modify({
+        id: postId,
+        fields: {
+          title: () => updated.title,
+          content: () => updated.content,
+          imageUrl: () => updated.imageUrl,
         },
       });
     },
@@ -209,7 +259,7 @@ export default function PostCard({ post }) {
       try {
         await navigator.share({ title: post.title, text });
       } catch (e) {
-        // annulé par l'utilisateur, on ignore
+        // annulé par l'utilisateur
       }
     } else {
       try {

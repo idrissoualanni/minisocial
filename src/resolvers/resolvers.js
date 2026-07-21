@@ -21,6 +21,7 @@ const EVENTS = {
   POST_CREATED: "POST_CREATED",
   COMMENT_ADDED: "COMMENT_ADDED",
   MESSAGE_SENT: "MESSAGE_SENT",
+  MESSAGE_SENT_TO_USER: "MESSAGE_SENT_TO_USER",
   MESSAGE_READ: "MESSAGE_READ",
   CHAT_PERMISSION_UPDATED: "CHAT_PERMISSION_UPDATED",
   LIKE_TOGGLED: "LIKE_TOGGLED",
@@ -412,6 +413,8 @@ const resolvers = {
       const newMessage = stmts.messageById.get(result.lastInsertRowid);
       const decrypted = decryptMessage(newMessage);
       pubsub.publish(EVENTS.MESSAGE_SENT, { messageSent: decrypted });
+      // Publier aussi pour le subscription global (ChatLobby unreadCount)
+      pubsub.publish(EVENTS.MESSAGE_SENT_TO_USER, { messageSentToUser: decrypted });
       return decrypted;
     },
 
@@ -643,6 +646,20 @@ const resolvers = {
         };
       },
       resolve: (payload) => payload.messageSent,
+    },
+    messageSentToUser: {
+      subscribe: (_, { userId }) => {
+        return {
+          [Symbol.asyncIterator]: async function* () {
+            const iter = pubsub.asyncIterator([EVENTS.MESSAGE_SENT_TO_USER]);
+            for await (const event of iter) {
+              const msg = event.messageSentToUser;
+              if (String(msg.receiver_id) === String(userId)) yield event;
+            }
+          },
+        };
+      },
+      resolve: (payload) => payload.messageSentToUser,
     },
     chatPermissionUpdated: {
       subscribe: (_, { userId }) => {
