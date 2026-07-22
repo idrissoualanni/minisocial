@@ -2,6 +2,8 @@ import { useQuery } from "@apollo/client/react";
 import { gql } from "@apollo/client";
 import { getAvatarGradient } from "../utils";
 import useStore from "../store";
+import type { GraphUser } from "../types";
+import type React from "react";
 
 const GET_USERS = gql`
   query GetUsers {
@@ -15,9 +17,13 @@ const GET_USERS = gql`
   }
 `;
 
+interface GetUsersData {
+  users: GraphUser[];
+}
+
 export default function Sidebar() {
   const openProfile = useStore((s) => s.openProfile);
-  const { data, loading } = useQuery(GET_USERS);
+  const { data, loading } = useQuery<GetUsersData>(GET_USERS);
 
   if (loading) return <p style={{ color: "var(--text-tertiary)" }}>Chargement...</p>;
 
@@ -53,7 +59,7 @@ export default function Sidebar() {
         <h3 className="text-sm font-bold mb-4 tracking-tight" style={{ color: "var(--text)" }}>Membres</h3>
         <div className="flex flex-col gap-1">
           {users.map((u) => (
-            <div key={u.id} className="flex items-center gap-3 py-2 px-2 rounded-lg transition-colors duration-150" style={{ "--hover-bg": "var(--surface-sunken)" }}>
+            <div key={u.id} className="flex items-center gap-3 py-2 px-2 rounded-lg transition-colors duration-150" style={{ "--hover-bg": "var(--surface-sunken)" } as React.CSSProperties}>
               <div className="relative flex-shrink-0">
                 <div
                   className="w-9 h-9 rounded-full grid place-items-center font-bold text-xs text-white cursor-pointer transition-opacity duration-150 hover:opacity-75"
