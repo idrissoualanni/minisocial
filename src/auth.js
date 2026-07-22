@@ -1,6 +1,6 @@
 // src/auth.js — Better Auth configuration
 import { betterAuth } from "better-auth";
-import db from "./db.js";
+import db from "./db/index.js";
 
 export const auth = betterAuth({
   database: db,

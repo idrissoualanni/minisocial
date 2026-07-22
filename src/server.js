@@ -17,13 +17,14 @@ import { existsSync } from "fs";
 import { toNodeHandler } from "better-auth/node";
 
 // db MUST be imported first — it runs the schema migration
-import db from "./db.js";
+import db from "./db/index.js";
 
-import typeDefs from "./schema/typeDefs.js";
-import resolvers from "./resolvers/resolvers.js";
-import { contextFn } from "./middleware/auth.js";
+import typeDefs from "./graphql/schema/typeDefs.js";
+import resolvers from "./graphql/resolvers/index.js";
+import { contextFn } from "./graphql/context.js";
 import { globalLimiter } from "./middleware/rateLimit.js";
 import { auth } from "./auth.js";
+import { PORT, CORS_ORIGINS } from "./config/index.js";
 
 // --- Paths ---
 const __filename = fileURLToPath(import.meta.url);
@@ -35,7 +36,6 @@ const schema = makeExecutableSchema({ typeDefs, resolvers });
 // --- Express + HTTP Server ---
 const app = express();
 const httpServer = createServer(app);
-const PORT = 4000;
 
 // --- Better Auth handler (AVANT express.json) ---
 app.all("/api/auth/*", toNodeHandler(auth));
@@ -87,7 +87,7 @@ app.use("/graphql", globalLimiter);
 // --- Middleware ---
 app.use(
   "/graphql",
-  cors({ origin: ["http://localhost:5173", "http://localhost:4000"], credentials: true }),
+  cors({ origin: CORS_ORIGINS, credentials: true }),
   express.json({ limit: "10mb" }),
   expressMiddleware(server, { context: contextFn })
 );

@@ -1,6 +1,6 @@
 // src/middleware/auth.js
 import { auth } from "../auth.js";
-import { ensureAppUser } from "../db.js";
+import { ensureAppUser } from "../db/index.js";
 
 /**
  * Extrait la session Better Auth du header Authorization.

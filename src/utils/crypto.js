@@ -13,7 +13,7 @@ import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const ENV_PATH = join(__dirname, "..", ".env");
+const ENV_PATH = join(__dirname, "..", "..", ".env");
 
 // --- Chargement ou génération de la clé ---
 function loadKey() {

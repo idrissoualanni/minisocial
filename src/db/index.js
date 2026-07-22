@@ -13,7 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Ouvre (ou crée) le fichier social.db à la racine du projet
-const db = new Database(join(__dirname, "social.db"));
+const db = new Database(join(__dirname, "..", "social.db"));
 
 // Mode WAL pour de meilleures performances en lecture concurrente
 db.pragma("journal_mode = WAL");
