@@ -1,11 +1,17 @@
 import { getAvatarGradient } from "../utils";
 import useStore from "../store";
+import type { User } from "../store";
+
+interface HeaderProps {
+  user?: User | null;
+  onSignOut?: () => void;
+}
 
 const NAV_ITEMS = [
   {
     key: "feed",
     label: "Accueil",
-    icon: (active) => (
+    icon: (active: boolean) => (
       <svg viewBox="0 0 24 24" fill={active ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px]">
         <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
         <polyline points="9 22 9 12 15 12 15 22"/>
@@ -15,8 +21,8 @@ const NAV_ITEMS = [
   {
     key: "chat",
     label: "Messages",
-    icon: (active) => (
-      <svg viewBox="0 0 24 24" fill={active ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px]">
+    icon: (active: boolean) => (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px]">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
       </svg>
     ),
@@ -24,7 +30,7 @@ const NAV_ITEMS = [
   {
     key: "search",
     label: "Recherche",
-    icon: (active) => (
+    icon: (active: boolean) => (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px]">
         <circle cx="11" cy="11" r="8"/>
         <line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -33,12 +39,12 @@ const NAV_ITEMS = [
   },
 ];
 
-export default function Header({ user: currentUser, onSignOut }) {
+export default function Header({ user: currentUser, onSignOut }: HeaderProps) {
   const view = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
 
   const logout = async () => {
-    await onSignOut();
+    await onSignOut?.();
     window.location.reload();
   };
 
