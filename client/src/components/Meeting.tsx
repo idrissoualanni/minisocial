@@ -3,6 +3,42 @@ import { useMutation, useQuery, useSubscription, useApolloClient } from "@apollo
 import { gql } from "@apollo/client";
 import useStore from "../store";
 import MeetingControls from "./MeetingControls";
+import type { User } from "@/types";
+
+interface MeetingSignal {
+  meetingId: string;
+  fromUserId: string;
+  toUserId: string;
+  type: string;
+  payload: string;
+}
+
+interface MeetingParticipant {
+  id: string;
+}
+
+interface MeetingParticipantsData {
+  meeting: {
+    id: string;
+    participants: MeetingParticipant[];
+  };
+}
+
+interface MeetingUpdatedData {
+  meetingUpdated: {
+    id: string;
+    participants: MeetingParticipant[];
+  };
+}
+
+interface MeetingSignalData {
+  meetingSignal: MeetingSignal;
+}
+
+interface RemoteVideoProps {
+  userId: string;
+  stream: MediaStream;
+}
 
 const JOIN_MEETING = gql`
   mutation JoinMeeting($meetingId: ID!) {
@@ -44,7 +80,7 @@ const MEETING_UPDATED_SUB = gql`
   }
 `;
 
-const ICE_SERVERS = {
+const ICE_SERVERS: RTCConfiguration = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
@@ -73,27 +109,27 @@ export default function Meeting() {
   const showToast = useStore((s) => s.showToast);
   const setView = useStore((s) => s.setView);
 
-  const [isMuted, setIsMuted] = useState(false);
-  const [isCamOff, setIsCamOff] = useState(false);
-  const [peers, setPeers] = useState(new Map());
+  const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [isCamOff, setIsCamOff] = useState<boolean>(false);
+  const [peers, setPeers] = useState<Map<string, MediaStream>>(new Map());
 
-  const localVideoRef = useRef(null);
-  const localStreamRef = useRef(null);
-  const pcsRef = useRef({});
-  const iceBufferRef = useRef({});
-  const joinedRef = useRef(false);
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const pcsRef = useRef<Record<string, RTCPeerConnection>>({});
+  const iceBufferRef = useRef<Record<string, RTCIceCandidateInit[]>>({});
+  const joinedRef = useRef<boolean>(false);
 
   const apolloClient = useApolloClient();
   const [leaveMeeting] = useMutation(LEAVE_MEETING);
   const [sendSignal] = useMutation(SEND_SIGNAL);
   const [joinMeeting] = useMutation(JOIN_MEETING);
 
-  const createPeer = useCallback((remoteUserId) => {
+  const createPeer = useCallback((remoteUserId: string) => {
     const pc = new RTCPeerConnection(ICE_SERVERS);
     pcsRef.current[remoteUserId] = pc;
 
     localStreamRef.current?.getTracks().forEach((track) => {
-      pc.addTrack(track, localStreamRef.current);
+      if (localStreamRef.current) pc.addTrack(track, localStreamRef.current);
     });
 
     pc.ontrack = (e) => {
@@ -101,7 +137,7 @@ export default function Meeting() {
     };
 
     pc.onicecandidate = (e) => {
-      if (e.candidate) {
+      if (e.candidate && meeting?.id) {
         sendSignal({
           variables: {
             meetingId: meeting.id,
@@ -137,8 +173,9 @@ export default function Meeting() {
   }, [meeting?.id, sendSignal]);
 
   const createOfferFor = useCallback(
-    async (remoteUserId) => {
+    async (remoteUserId: string) => {
       if (pcsRef.current[remoteUserId]) return;
+      if (!meeting?.id) return;
       const pc = createPeer(remoteUserId);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -174,16 +211,16 @@ export default function Meeting() {
         await joinMeeting({ variables: { meetingId: meeting.id } });
         if (cancelled) return;
 
-        const { data } = await apolloClient.query({
+        const { data } = await apolloClient.query<MeetingParticipantsData>({
           query: GET_MEETING_PARTICIPANTS,
           variables: { id: meeting.id },
           fetchPolicy: "network-only",
         });
         if (cancelled || !data?.meeting?.participants) return;
 
-        const selfId = String(currentUser.id);
+        const selfId = String(currentUser!.id);
         const others = data.meeting.participants.filter(
-          (p) => String(p.id) !== selfId
+          (p: MeetingParticipant) => String(p.id) !== selfId
         );
         for (const p of others) {
           if (cancelled) break;
@@ -203,14 +240,14 @@ export default function Meeting() {
     };
   }, [meeting?.id, currentUser?.id, joinMeeting, apolloClient, createOfferFor, showToast]);
 
-  useSubscription(MEETING_UPDATED_SUB, {
+  useSubscription<MeetingUpdatedData>(MEETING_UPDATED_SUB, {
     variables: { meetingId: meeting?.id },
     skip: !meeting?.id,
     onData: ({ data: { data } }) => {
       const updated = data?.meetingUpdated;
       if (!updated) return;
-      const selfId = String(currentUser.id);
-      updated.participants.forEach((p) => {
+      const selfId = String(currentUser!.id);
+      updated.participants.forEach((p: MeetingParticipant) => {
         const pid = String(p.id);
         if (pid !== selfId && !pcsRef.current[pid]) {
           createOfferFor(pid);
@@ -219,14 +256,15 @@ export default function Meeting() {
     },
   });
 
-  useSubscription(SIGNAL_SUB, {
+  useSubscription<MeetingSignalData>(SIGNAL_SUB, {
     variables: { meetingId: meeting?.id },
     skip: !meeting?.id,
     onData: async ({ data: { data } }) => {
       try {
         const sig = data?.meetingSignal;
-        if (!sig || sig.fromUserId === String(currentUser.id)) return;
-        if (sig.toUserId !== String(currentUser.id)) return;
+        if (!sig || sig.fromUserId === String(currentUser!.id)) return;
+        if (sig.toUserId !== String(currentUser!.id)) return;
+        if (!meeting?.id) return;
 
         if (sig.type === "offer") {
           const pc = createPeer(sig.fromUserId);
@@ -272,7 +310,7 @@ export default function Meeting() {
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     Object.values(pcsRef.current).forEach((pc) => pc.close());
     pcsRef.current = {};
-    await leaveMeeting({ variables: { meetingId: meeting.id } });
+    if (meeting?.id) await leaveMeeting({ variables: { meetingId: meeting.id } });
     setView("feed");
     showToast("Reunion terminee");
   };
@@ -299,7 +337,7 @@ export default function Meeting() {
 
   return (
     <div className="max-w-4xl mx-auto p-4">
-      <h2 className="text-xl font-bold mb-4">{meeting.title}</h2>
+      <h2 className="text-xl font-bold mb-4">{String(meeting.title)}</h2>
       <div className="grid grid-cols-2 gap-4 mb-4">
         <div className="bg-gray-900 rounded-xl overflow-hidden aspect-video">
           <video
@@ -309,7 +347,7 @@ export default function Meeting() {
             playsInline
             className="w-full h-full object-cover"
           />
-          <p className="text-white text-sm p-2">Toi ({currentUser.name})</p>
+          <p className="text-white text-sm p-2">Toi ({currentUser!.name})</p>
         </div>
         {Array.from(peers.entries()).map(([userId, stream]) => (
           <RemoteVideo key={userId} userId={userId} stream={stream} />
@@ -326,8 +364,8 @@ export default function Meeting() {
   );
 }
 
-function RemoteVideo({ userId, stream }) {
-  const ref = useRef(null);
+function RemoteVideo({ userId, stream }: RemoteVideoProps) {
+  const ref = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
     if (ref.current) ref.current.srcObject = stream;
   }, [stream]);
