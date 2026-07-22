@@ -4,8 +4,8 @@ import chat from "./chat.js";
 import group from "./group.js";
 import meeting from "./meeting.js";
 
-function mergeResolverObjects(sources, key) {
-  const merged = {};
+function mergeResolverObjects(sources: any[], key: string): Record<string, any> | undefined {
+  const merged: Record<string, any> = {};
   for (const src of sources) {
     if (src[key]) {
       Object.assign(merged, src[key]);

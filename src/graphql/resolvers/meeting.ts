@@ -1,3 +1,5 @@
+import type { Context } from "../context.js";
+import type { AppUser } from "../../db/index.js";
 import db from "../../db/index.js";
 import { pubsub, EVENTS } from "../pubsub.js";
 import { validate, CreateMeetingSchema } from "../../utils/validation.js";
@@ -5,7 +7,6 @@ import { validate, CreateMeetingSchema } from "../../utils/validation.js";
 const stmts = {
   userById: db.prepare("SELECT * FROM app_users WHERE id = ?"),
 
-  // --- Meetings ---
   insertMeeting: db.prepare("INSERT INTO meetings (title, creator_id) VALUES (?, ?)"),
   meetingById: db.prepare("SELECT * FROM meetings WHERE id = ?"),
   allMeetings: db.prepare("SELECT * FROM meetings WHERE is_active = 1"),
@@ -14,14 +15,37 @@ const stmts = {
   removeMeetingParticipant: db.prepare("DELETE FROM meeting_participants WHERE meeting_id = ? AND user_id = ?"),
 };
 
+interface MeetingResult {
+  id: number;
+  title: string;
+  creator_id: number;
+  is_active: number;
+  created_at: string;
+}
+
+interface MeetingInvitedEvent {
+  meetingId: string;
+  meetingTitle: string;
+  fromUser: AppUser;
+  toUserId: string;
+}
+
+interface MeetingSignalEvent {
+  meetingId: string;
+  fromUserId: string;
+  toUserId: string;
+  type: string;
+  payload: unknown;
+}
+
 export default {
   Query: {
     meetings: () => stmts.allMeetings.all(),
-    meeting: (_, { id }) => stmts.meetingById.get(id) || null,
+    meeting: (_: unknown, { id }: { id: string }) => stmts.meetingById.get(id) || null,
   },
 
   Mutation: {
-    createMeeting: (_, args, { user }) => {
+    createMeeting: (_: unknown, args: { title: string; targetUserId?: string }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
       const data = validate(CreateMeetingSchema, { title: args.title });
       const result = stmts.insertMeeting.run(data.title, user.id);
@@ -37,25 +61,25 @@ export default {
             meetingTitle: data.title,
             fromUser,
             toUserId: String(args.targetUserId),
-          },
+          } as MeetingInvitedEvent,
         });
       }
 
       return meeting;
     },
 
-    joinMeeting: (_, { meetingId }, { user }) => {
+    joinMeeting: (_: unknown, { meetingId }: { meetingId: string }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
       stmts.insertMeetingParticipant.run(meetingId, user.id);
-      const meeting = stmts.meetingById.get(meetingId);
+      const meeting = stmts.meetingById.get(meetingId) as MeetingResult | undefined;
       pubsub.publish(EVENTS.MEETING_UPDATED, { meetingUpdated: meeting });
       return meeting;
     },
 
-    leaveMeeting: (_, { meetingId }, { user }) => {
+    leaveMeeting: (_: unknown, { meetingId }: { meetingId: string }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
       stmts.removeMeetingParticipant.run(meetingId, user.id);
-      const meeting = stmts.meetingById.get(meetingId);
+      const meeting = stmts.meetingById.get(meetingId) as MeetingResult | undefined;
       if (meeting) {
         const remaining = stmts.meetingParticipants.all(meetingId);
         if (remaining.length === 0) {
@@ -67,7 +91,7 @@ export default {
       return true;
     },
 
-    sendMeetingSignal: (_, { meetingId, toUserId, type, payload }, { user }) => {
+    sendMeetingSignal: (_: unknown, { meetingId, toUserId, type, payload }: { meetingId: string; toUserId: string; type: string; payload?: unknown }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
       pubsub.publish(EVENTS.MEETING_SIGNAL, {
         meetingSignal: {
@@ -76,7 +100,7 @@ export default {
           toUserId,
           type,
           payload: payload || null,
-        },
+        } as MeetingSignalEvent,
       });
       return true;
     },
@@ -84,56 +108,52 @@ export default {
 
   Subscription: {
     meetingSignal: {
-      subscribe: (_, { meetingId }) => {
+      subscribe: (_: unknown, { meetingId }: { meetingId: string }) => {
         return {
           [Symbol.asyncIterator]: async function* () {
-            const iter = pubsub.subscribe([EVENTS.MEETING_SIGNAL]);
-            try {
-              for await (const event of iter) {
-                if (String(event.meetingSignal.meetingId) === String(meetingId)) yield event;
-              }
-            } finally {
-              iter.return?.();
+            const iter = pubsub.asyncIterableIterator([EVENTS.MEETING_SIGNAL]) as AsyncIterableIterator<any>;
+            for await (const event of iter) {
+              if (String(event.meetingSignal.meetingId) === String(meetingId)) yield event;
             }
           },
         };
       },
-      resolve: (payload) => payload.meetingSignal,
+      resolve: (payload: any) => payload.meetingSignal,
     },
 
     meetingUpdated: {
-      subscribe: (_, { meetingId }) => {
+      subscribe: (_: unknown, { meetingId }: { meetingId: string }) => {
         return {
           [Symbol.asyncIterator]: async function* () {
-            const iter = pubsub.subscribe([EVENTS.MEETING_UPDATED]);
+            const iter = pubsub.asyncIterableIterator([EVENTS.MEETING_UPDATED]) as AsyncIterableIterator<any>;
             for await (const event of iter) {
               if (String(event.meetingUpdated.id) === String(meetingId)) yield event;
             }
           },
         };
       },
-      resolve: (payload) => payload.meetingUpdated,
+      resolve: (payload: any) => payload.meetingUpdated,
     },
 
     meetingInvited: {
-      subscribe: (_, { userId }) => {
+      subscribe: (_: unknown, { userId }: { userId: string }) => {
         return {
           [Symbol.asyncIterator]: async function* () {
-            const iter = pubsub.subscribe([EVENTS.MEETING_INVITED]);
+            const iter = pubsub.asyncIterableIterator([EVENTS.MEETING_INVITED]) as AsyncIterableIterator<any>;
             for await (const event of iter) {
               if (String(event.meetingInvited.toUserId) === String(userId)) yield event;
             }
           },
         };
       },
-      resolve: (payload) => payload.meetingInvited,
+      resolve: (payload: any) => payload.meetingInvited,
     },
   },
 
   Meeting: {
-    creator: (parent) => stmts.userById.get(parent.creator_id),
-    participants: (parent) => stmts.meetingParticipants.all(parent.id),
-    isActive: (parent) => !!parent.is_active,
-    createdAt: (parent) => parent.created_at,
+    creator: (parent: { creator_id: number }) => stmts.userById.get(parent.creator_id),
+    participants: (parent: { id: number }) => stmts.meetingParticipants.all(parent.id),
+    isActive: (parent: { is_active: number }) => !!parent.is_active,
+    createdAt: (parent: { created_at: string }) => parent.created_at,
   },
 };

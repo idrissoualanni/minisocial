@@ -1,3 +1,5 @@
+import type { Context } from "../context.js";
+import type { AppUser } from "../../db/index.js";
 import db from "../../db/index.js";
 import { pubsub, EVENTS } from "../pubsub.js";
 import { encrypt, decrypt } from "../../utils/crypto.js";
@@ -5,7 +7,6 @@ import { encrypt, decrypt } from "../../utils/crypto.js";
 const stmts = {
   userById: db.prepare("SELECT * FROM app_users WHERE id = ?"),
 
-  // --- Groupes ---
   insertGroup: db.prepare("INSERT INTO chat_groups (name, creator_id) VALUES (?, ?)"),
   groupById: db.prepare("SELECT * FROM chat_groups WHERE id = ?"),
   insertGroupMember: db.prepare("INSERT OR IGNORE INTO group_members (group_id, user_id, is_creator) VALUES (?, ?, ?)"),
@@ -32,16 +33,40 @@ const stmts = {
   removeGroupMember: db.prepare("DELETE FROM group_members WHERE group_id = ? AND user_id = ?"),
 };
 
+interface ChatGroupResult {
+  id: number;
+  name: string;
+  creator_id: number;
+  created_at: string;
+}
+
+interface GroupMemberResult {
+  user_id: number;
+  name: string;
+  email: string;
+  last_seen: string;
+  is_creator: number;
+  joined_at: string;
+}
+
+interface GroupMessageResult {
+  id: number;
+  text: string;
+  sender_id: number;
+  group_id: number;
+  created_at: string;
+}
+
 export default {
   Query: {
-    myGroups: (_, { userId }, { user }) => {
+    myGroups: (_: unknown, { userId }: { userId: string }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
       if (user.id !== Number(userId)) {
         throw new Error("Accès refusé — tu ne peux voir que tes propres groupes.");
       }
       return stmts.myGroups.all(userId);
     },
-    groupMessages: (_, { groupId, limit }, { user }) => {
+    groupMessages: (_: unknown, { groupId, limit }: { groupId: string; limit?: number }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
       const member = stmts.isGroupMember.get(groupId, user.id);
       if (!member) throw new Error("Accès refusé — tu n'es pas membre de ce groupe.");
@@ -50,7 +75,7 @@ export default {
   },
 
   Mutation: {
-    createGroup: (_, { name, memberIds }, { user }) => {
+    createGroup: (_: unknown, { name, memberIds }: { name: string; memberIds: number[] }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
       const result = stmts.insertGroup.run(name, user.id);
       const groupId = result.lastInsertRowid;
@@ -63,7 +88,7 @@ export default {
       return stmts.groupById.get(groupId);
     },
 
-    addGroupMember: (_, { groupId, userId }, { user }) => {
+    addGroupMember: (_: unknown, { groupId, userId }: { groupId: string; userId: number }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
       const group = stmts.groupById.get(groupId);
       if (!group) throw new Error("Groupe introuvable.");
@@ -75,9 +100,9 @@ export default {
       return { user: u, isCreator: false, joinedAt: new Date().toISOString() };
     },
 
-    removeGroupMember: (_, { groupId, userId }, { user }) => {
+    removeGroupMember: (_: unknown, { groupId, userId }: { groupId: string; userId: number }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
-      const group = stmts.groupById.get(groupId);
+      const group = stmts.groupById.get(groupId) as ChatGroupResult | undefined;
       if (!group) throw new Error("Groupe introuvable.");
       if (group.creator_id !== user.id && user.id !== Number(userId)) {
         throw new Error("Accès refusé — seul le créateur peut virer un membre, ou tu peux te retirer toi-même.");
@@ -86,15 +111,15 @@ export default {
       return true;
     },
 
-    sendGroupMessage: (_, { text, groupId }, { user }) => {
+    sendGroupMessage: (_: unknown, { text, groupId }: { text: string; groupId: string }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
-      const group = stmts.groupById.get(groupId);
+      const group = stmts.groupById.get(groupId) as ChatGroupResult | undefined;
       if (!group) throw new Error("Groupe introuvable.");
       const member = stmts.isGroupMember.get(groupId, user.id);
       if (!member) throw new Error("Vous n'êtes pas membre de ce groupe.");
       const encrypted = encrypt(text);
       const result = stmts.insertGroupMessage.run(encrypted, user.id, groupId);
-      const newMsg = stmts.groupMessageById.get(result.lastInsertRowid);
+      const newMsg = stmts.groupMessageById.get(result.lastInsertRowid) as GroupMessageResult;
       const decrypted = { ...newMsg, text: decrypt(newMsg.text) };
       pubsub.publish(EVENTS.GROUP_MESSAGE_SENT, { groupMessageSent: decrypted });
       return decrypted;
@@ -103,39 +128,39 @@ export default {
 
   Subscription: {
     groupMessageSent: {
-      subscribe: (_, { groupId }) => {
+      subscribe: (_: unknown, { groupId }: { groupId: string }) => {
         return {
           [Symbol.asyncIterator]: async function* () {
-            const iter = pubsub.subscribe([EVENTS.GROUP_MESSAGE_SENT]);
+            const iter = pubsub.asyncIterableIterator([EVENTS.GROUP_MESSAGE_SENT]) as AsyncIterableIterator<any>;
             for await (const event of iter) {
               if (String(event.groupMessageSent.group_id) === String(groupId)) yield event;
             }
           },
         };
       },
-      resolve: (payload) => payload.groupMessageSent,
+      resolve: (payload: any) => payload.groupMessageSent,
     },
   },
 
   ChatGroup: {
-    creator: (parent) => stmts.userById.get(parent.creator_id),
-    members: (parent) => stmts.groupMembers.all(parent.id).map((m) => ({
+    creator: (parent: { creator_id: number }) => stmts.userById.get(parent.creator_id),
+    members: (parent: { id: number }) => (stmts.groupMembers.all(parent.id) as GroupMemberResult[]).map((m) => ({
       user: stmts.userById.get(m.user_id),
       isCreator: !!m.is_creator,
       joinedAt: m.joined_at,
     })),
-    createdAt: (parent) => parent.created_at,
+    createdAt: (parent: { created_at: string }) => parent.created_at,
   },
 
   GroupMember: {
-    user: (parent) => parent.user,
-    isCreator: (parent) => parent.isCreator,
-    joinedAt: (parent) => parent.joinedAt,
+    user: (parent: { user: AppUser }) => parent.user,
+    isCreator: (parent: { isCreator: boolean }) => parent.isCreator,
+    joinedAt: (parent: { joinedAt: string }) => parent.joinedAt,
   },
 
   GroupMessage: {
-    sender: (parent) => stmts.userById.get(parent.sender_id),
-    group: (parent) => stmts.groupById.get(parent.group_id),
-    createdAt: (parent) => parent.created_at,
+    sender: (parent: { sender_id: number }) => stmts.userById.get(parent.sender_id),
+    group: (parent: { group_id: number }) => stmts.groupById.get(parent.group_id),
+    createdAt: (parent: { created_at: string }) => parent.created_at,
   },
 };

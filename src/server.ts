@@ -1,22 +1,17 @@
-// ============================================================
-// server.js — Apollo Server + WebSocket (subscriptions)
-// + Better Auth (/api/auth/*)
-// ============================================================
-
 import { ApolloServer } from "@apollo/server";
 import { expressMiddleware } from "@apollo/server/express4";
 import { makeExecutableSchema } from "@graphql-tools/schema";
-import express from "express";
+import { type IResolvers } from "@graphql-tools/utils";
+import express, { type Express, type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
-import { createServer } from "http";
-import { WebSocketServer } from "ws";
+import { createServer, type Server } from "http";
+import { WebSocketServer, type WebSocket } from "ws";
 import { useServer } from "graphql-ws/use/ws";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { existsSync } from "fs";
 import { toNodeHandler } from "better-auth/node";
 
-// db MUST be imported first — it runs the schema migration
 import db from "./db/index.js";
 
 import typeDefs from "./graphql/schema/typeDefs.js";
@@ -26,44 +21,45 @@ import { globalLimiter } from "./middleware/rateLimit.js";
 import { auth } from "./auth.js";
 import { PORT, CORS_ORIGINS } from "./config/index.js";
 
-// --- Paths ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// --- Schema exécutable (requis par graphql-ws) ---
-const schema = makeExecutableSchema({ typeDefs, resolvers });
+const schema = makeExecutableSchema({ typeDefs, resolvers: resolvers as IResolvers });
 
-// --- Express + HTTP Server ---
-const app = express();
-const httpServer = createServer(app);
+const app: Express = express();
+const httpServer: Server = createServer(app);
 
-// --- Better Auth handler (AVANT express.json) ---
 app.all("/api/auth/*", toNodeHandler(auth));
 
-// --- WebSocket Server (pour les subscriptions) ---
 const wsServer = new WebSocketServer({
   server: httpServer,
   path: "/graphql",
 });
 
+interface WSContext {
+  connectionParams: Record<string, unknown> | undefined;
+  extra?: {
+    request?: {
+      headers: Record<string, unknown>;
+    };
+  };
+}
+
 const serverCleanup = useServer(
   {
     schema,
-    context: async (ctx) => {
-      // Better Auth: lire les cookies depuis la requête HTTP upgrade initiale
+    context: async (ctx: WSContext) => {
       const req = ctx.extra?.request;
       if (req) {
-        return contextFn({ req });
+        return contextFn({ req: req as any });
       }
-      // Fallback: utiliser connectionParams (si le client envoie le token)
       const headers = ctx.connectionParams || {};
-      return contextFn({ req: { headers } });
+      return contextFn({ req: { headers } as any });
     },
   },
   wsServer
 );
 
-// --- Apollo Server (HTTP) ---
 const server = new ApolloServer({
   schema,
   plugins: [
@@ -81,29 +77,24 @@ const server = new ApolloServer({
 
 await server.start();
 
-// --- Rate limiting global ---
 app.use("/graphql", globalLimiter);
 
-// --- Middleware ---
 app.use(
   "/graphql",
   cors({ origin: CORS_ORIGINS, credentials: true }),
   express.json({ limit: "10mb" }),
-  expressMiddleware(server, { context: contextFn })
+  expressMiddleware(server, { context: contextFn }) as any
 );
 
-// Servir le build React en production
 app.use(express.static(join(__dirname, "..", "client", "dist")));
 
-// SPA fallback
 const indexPath = join(__dirname, "..", "client", "dist", "index.html");
 if (existsSync(indexPath)) {
-  app.get("*", (req, res) => {
+  app.get("*", (_req: Request, res: Response) => {
     res.sendFile(indexPath);
   });
 }
 
-// --- Lancement ---
 httpServer.listen(PORT, () => {
   console.log(`\n🚀 GraphQL HTTP  → http://localhost:${PORT}/graphql`);
   console.log(`🔌 GraphQL WS    → ws://localhost:${PORT}/graphql`);
