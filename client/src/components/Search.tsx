@@ -6,6 +6,11 @@ import { useState, useEffect, useRef } from "react";
 import { useLazyQuery } from "@apollo/client/react";
 import { gql } from "@apollo/client";
 import PostCard from "./PostCard";
+import type { Post } from "@/types";
+
+interface SearchPostsData {
+  search: Post[];
+}
 
 const SEARCH_POSTS = gql`
   query SearchPosts($query: String!) {
@@ -21,11 +26,11 @@ const SEARCH_POSTS = gql`
 
 export default function Search() {
   const [query, setQuery] = useState("");
-  const [search, { data, loading }] = useLazyQuery(SEARCH_POSTS, {
+  const [search, { data, loading }] = useLazyQuery<SearchPostsData>(SEARCH_POSTS, {
     fetchPolicy: "cache-and-network",
   });
-  const debounceRef = useRef(null);
-  const inputRef = useRef(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   // Ref pour garder la dernière valeur de query sans rerender
   const queryRef = useRef(query);
   queryRef.current = query;
@@ -38,10 +43,10 @@ export default function Search() {
     debounceRef.current = setTimeout(() => {
       search({ variables: { query: q } });
     }, 150);
-    return () => clearTimeout(debounceRef.current);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleChange = (e) => setQuery(e.target.value);
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => setQuery(e.target.value);
 
   const results = data?.search || [];
   const showResults = query.trim().length > 0;
