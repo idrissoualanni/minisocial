@@ -4,10 +4,11 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useSubscription, useApolloClient } from "@apollo/client/react";
-import { gql } from "@apollo/client";
+import { gql, type Reference } from "@apollo/client";
 import { getAvatarGradient, timeAgo } from "../utils";
 import CreateGroup from "./CreateGroup";
 import useStore from "../store";
+import type { ConversationPreview, PendingRequest, ChatPermission, Group, Message } from "../types";
 
 // ── Subscription: nouveaux messages pour unreadCount temps réel ──
 const MESSAGE_SENT_GLOBAL_SUB = gql`
@@ -112,6 +113,18 @@ const PERMISSION_SUB = gql`
   }
 `;
 
+interface PreviewsData {
+  conversationPreviews: ConversationPreview[];
+}
+
+interface PendingData {
+  pendingRequests: PendingRequest[];
+}
+
+interface GroupsData {
+  myGroups: Group[];
+}
+
 export default function ChatLobby() {
   const currentUser = useStore((s) => s.currentUser);
   const showToast = useStore((s) => s.showToast);
@@ -119,13 +132,13 @@ export default function ChatLobby() {
   const openGroupChat = useStore((s) => s.openGroupChat);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
 
-  const { data: previewsData, refetch: refetchPreviews } = useQuery(GET_PREVIEWS, {
+  const { data: previewsData, refetch: refetchPreviews } = useQuery<PreviewsData>(GET_PREVIEWS, {
     variables: { userId: currentUser?.id }, skip: !currentUser,
   });
-  const { data: pendingData, refetch: refetchPending } = useQuery(GET_PENDING, {
+  const { data: pendingData, refetch: refetchPending } = useQuery<PendingData>(GET_PENDING, {
     variables: { userId: currentUser?.id }, skip: !currentUser,
   });
-  const { data: groupsData, refetch: refetchGroups } = useQuery(MY_GROUPS, {
+  const { data: groupsData, refetch: refetchGroups } = useQuery<GroupsData>(MY_GROUPS, {
     variables: { userId: currentUser?.id }, skip: !currentUser,
   });
 
@@ -135,9 +148,11 @@ export default function ChatLobby() {
   });
   const [acceptChat] = useMutation(ACCEPT_CHAT, {
     onCompleted: (data) => {
-      showToast(`${data.acceptChat.sender.name} a accepté !`);
+      const result = data as { acceptChat: ChatPermission } | null;
+      if (!result) return;
+      showToast(`${result.acceptChat.sender.name} a accepté !`);
       refetchPreviews(); refetchPending();
-      openChat(data.acceptChat.sender);
+      openChat(result.acceptChat.sender as import("../store").User);
     },
     onError: (err) => showToast(err.message, "error"),
   });
@@ -156,22 +171,23 @@ export default function ChatLobby() {
   useSubscription(MESSAGE_SENT_GLOBAL_SUB, {
     skip: !currentUser,
     onData: ({ data: { data } }) => {
-      const msg = data?.messageSentToUser;
+      const typed = data as Record<string, Message> | null;
+      const msg = typed?.messageSentToUser ?? typed?.messageSent;
       if (!msg) return;
       // Incrémenter unreadCount dans le cache pour cette conversation
       const senderId = String(msg.sender.id);
       const receiverId = String(msg.receiver.id);
       // Mettre à jour le preview correspondant dans GET_PREVIEWS
-      const existingData = cache.readQuery({
+      const existingData = cache.readQuery<PreviewsData>({
         query: GET_PREVIEWS,
         variables: { userId: currentUser?.id },
       });
       if (!existingData?.conversationPreviews) return;
-      cache.writeQuery({
+      cache.writeQuery<PreviewsData>({
         query: GET_PREVIEWS,
         variables: { userId: currentUser?.id },
         data: {
-          conversationPreviews: existingData.conversationPreviews.map((p) => {
+          conversationPreviews: existingData.conversationPreviews.map((p: ConversationPreview) => {
             if (String(p.user.id) === senderId) {
               return {
                 ...p,
@@ -191,10 +207,11 @@ export default function ChatLobby() {
     variables: { userId: currentUser?.id },
     skip: !currentUser,
     onData: ({ data: { data } }) => {
-      const evt = data?.messageRead;
+      const typed = data as Record<string, { messageId: string; senderId: string; receiverId: string }> | null;
+      const evt = typed?.messageRead;
       if (!evt) return;
       // Si quelqu'un a lu nos messages, mettre à jour le preview
-      const existingData = cache.readQuery({
+      const existingData = cache.readQuery<PreviewsData>({
         query: GET_PREVIEWS,
         variables: { userId: currentUser?.id },
       });
@@ -226,7 +243,7 @@ export default function ChatLobby() {
   if (showCreateGroup) {
     return (
       <CreateGroup
-        onCreated={(g) => { setShowCreateGroup(false); refetchGroups(); }}
+        onCreated={(g: Group) => { setShowCreateGroup(false); refetchGroups(); }}
         onCancel={() => setShowCreateGroup(false)}
       />
     );
@@ -311,15 +328,20 @@ export default function ChatLobby() {
 }
 
 // --- Ligne de contact ---
-function ContactRow({ preview, requestChat }) {
+interface ContactRowProps {
+  preview: ConversationPreview;
+  requestChat: (options: { variables: { receiverId: string } }) => void;
+}
+
+function ContactRow({ preview, requestChat }: ContactRowProps) {
   const currentUser = useStore((s) => s.currentUser);
   const openChatFn = useStore((s) => s.openChat);
   const showToast = useStore((s) => s.showToast);
   const openProfile = useStore((s) => s.openProfile);
   const { user, lastMessage, unreadCount } = preview;
 
-  const { data } = useQuery(GET_PERMISSION, {
-    variables: { userId1: currentUser.id, userId2: user.id }, skip: !currentUser,
+  const { data } = useQuery<{ chatPermission: ChatPermission }>(GET_PERMISSION, {
+    variables: { userId1: currentUser!.id, userId2: user.id }, skip: !currentUser,
     fetchPolicy: "cache-and-network",
   });
 
@@ -351,7 +373,7 @@ function ContactRow({ preview, requestChat }) {
         <div style={{ fontSize: "0.72rem", color: "var(--text-tertiary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {lastMessage ? (
             <>
-              {lastMessage.sender.id === currentUser.id && <span className="font-semibold" style={{ color: "var(--text-secondary)" }}>Toi : </span>}
+              {lastMessage.sender.id === currentUser!.id && <span className="font-semibold" style={{ color: "var(--text-secondary)" }}>Toi : </span>}
               {lastMessage.text.length > 40 ? lastMessage.text.substring(0, 40) + "..." : lastMessage.text}
               {lastMessage.createdAt && <span className="opacity-70" style={{ color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", fontSize: "0.65rem" }}> · {timeAgo(lastMessage.createdAt)}</span>}
             </>
