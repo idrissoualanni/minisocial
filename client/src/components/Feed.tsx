@@ -8,6 +8,7 @@ import { useEffect } from "react";
 import Composer from "./Composer";
 import PostCard from "./PostCard";
 import { useNotify } from "../hooks/useNotifications";
+import type { Post } from "../types";
 
 const POST_FIELDS = `
   id title content imageUrl createdAt
@@ -25,6 +26,10 @@ export const GET_POSTS = gql`
     }
   }
 `;
+
+interface GetPostsData {
+  posts: Post[];
+}
 
 // --- Subscriptions ---
 const POST_CREATED = gql`
@@ -46,19 +51,19 @@ const COMMENT_ADDED = gql`
 `;
 
 export default function Feed() {
-  const { data, loading, error, subscribeToMore, client } = useQuery(GET_POSTS);
+  const { data, loading, error, subscribeToMore, client } = useQuery<GetPostsData>(GET_POSTS);
   const notify = useNotify();
 
   // --- Abonnement aux nouveaux posts (autres utilisateurs) ---
   useEffect(() => {
     const unsubscribe = subscribeToMore({
       document: POST_CREATED,
-      updateQuery: (prev, { subscriptionData }) => {
+      updateQuery: ((prev: GetPostsData, { subscriptionData }: { subscriptionData: { data: unknown } }) => {
         if (!subscriptionData.data) return prev;
-        const newPost = subscriptionData.data.postCreated;
-        if (prev.posts.some((p) => p.id === newPost.id)) return prev;
-        return { ...prev, posts: [newPost, ...prev.posts] };
-      },
+        const newPost = (subscriptionData.data as unknown as { postCreated: Post }).postCreated;
+        if (prev.posts.some((post) => post.id === newPost.id)) return prev;
+        return { posts: [newPost, ...prev.posts] };
+      }) as any,
     });
     return () => unsubscribe();
   }, [subscribeToMore]);
@@ -67,9 +72,9 @@ export default function Feed() {
   useEffect(() => {
     const unsubscribe = subscribeToMore({
       document: COMMENT_ADDED,
-      updateQuery: (prev, { subscriptionData }) => {
+      updateQuery: ((prev: GetPostsData, { subscriptionData }: { subscriptionData: { data: unknown } }) => {
         if (!subscriptionData.data) return prev;
-        const newComment = subscriptionData.data.commentAdded;
+        const newComment = (subscriptionData.data as unknown as { commentAdded: Post["comments"][number] }).commentAdded;
         const postId = newComment.post.id;
 
         if (document.hidden) {
@@ -80,14 +85,13 @@ export default function Feed() {
         }
 
         return {
-          ...prev,
           posts: prev.posts.map((post) => {
             if (post.id !== postId) return post;
             if (post.comments.some((c) => c.id === newComment.id)) return post;
             return { ...post, comments: [...post.comments, newComment] };
           }),
         };
-      },
+      }) as any,
     });
     return () => unsubscribe();
   }, [subscribeToMore, notify]);
@@ -99,7 +103,7 @@ export default function Feed() {
     <>
       <Composer />
       <div className="flex flex-col gap-5">
-        {data.posts.map((post) => (
+        {data!.posts.map((post) => (
           <PostCard
             key={post.id}
             post={post}
