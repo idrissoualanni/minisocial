@@ -5,12 +5,18 @@
 
 import { useState } from "react";
 import { useMutation, useSubscription, useApolloClient } from "@apollo/client/react";
-import { gql } from "@apollo/client";
+import { gql, type Reference } from "@apollo/client";
 import CommentItem from "./CommentItem";
 import ImageCropModal from "./ImageCropModal";
 import { getAvatarGradient, timeAgo } from "../utils";
 import { GET_POSTS } from "./Feed";
 import useStore from "../store";
+import type { Post } from "../types";
+import type { User } from "../store";
+
+interface PostCardProps {
+  post: Post;
+}
 
 const ADD_COMMENT = gql`
   mutation AddComment($text: String!, $postId: ID!, $parentId: ID) {
@@ -50,30 +56,31 @@ const LIKE_TOGGLED = gql`
   }
 `;
 
-export default function PostCard({ post }) {
+export default function PostCard({ post }: PostCardProps) {
   const currentUser = useStore((s) => s.currentUser);
   const showToast = useStore((s) => s.showToast);
   const openProfile = useStore((s) => s.openProfile);
-  const [showComments, setShowComments] = useState(false);
-  const [commentText, setCommentText] = useState("");
-  const [replyTo, setReplyTo] = useState(null);
-  const [editing, setEditing] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const [editTitle, setEditTitle] = useState(post.title);
-  const [editContent, setEditContent] = useState(post.content);
-  const [editImageUrl, setEditImageUrl] = useState(post.imageUrl || null);
-  const [showCropModal, setShowCropModal] = useState(false);
+  const [showComments, setShowComments] = useState<boolean>(false);
+  const [commentText, setCommentText] = useState<string>("");
+  const [replyTo, setReplyTo] = useState<Post["comments"][number] | null>(null);
+  const [editing, setEditing] = useState<boolean>(false);
+  const [expanded, setExpanded] = useState<boolean>(false);
+  const [editTitle, setEditTitle] = useState<string>(post.title);
+  const [editContent, setEditContent] = useState<string>(post.content);
+  const [editImageUrl, setEditImageUrl] = useState<string | null>(post.imageUrl || null);
+  const [showCropModal, setShowCropModal] = useState<boolean>(false);
   const { cache } = useApolloClient();
 
   const likedByMe = currentUser && post.likes?.some((u) => String(u.id) === String(currentUser.id));
   const likeCount = post.likeCount || 0;
 
   // ── LIKE: optimistic + cache.modify chirurgical ──
-  const [toggleLike] = useMutation(TOGGLE_LIKE, {
+  const [toggleLike] = useMutation<{ toggleLike: boolean }>(TOGGLE_LIKE, {
     optimisticResponse: {
-      toggleLike: !likedByMe,
+      toggleLike: !!likedByMe,
     },
-    update: (cache, { data: { toggleLike: liked } }) => {
+    update: (cache, { data }) => {
+      const liked = data?.toggleLike ?? false;
       // cache.modify cible directement l'objet Post:5 dans le cache
       // Pas besoin de lire → mapper → réécrire toute la query GET_POSTS
       const postId = cache.identify({ __typename: "Post", id: post.id });
@@ -85,14 +92,14 @@ export default function PostCard({ post }) {
             if (liked) {
               // Ajouter une référence vers l'utilisateur courant
               const userRef = cache.writeFragment({
-                data: { __typename: "User", id: currentUser.id, name: currentUser.name },
+                data: { __typename: "User", id: currentUser!.id, name: currentUser!.name },
                 fragment: gql`fragment BriefUser on User { id name }`,
               });
               return [...existingRefs, userRef];
             } else {
               // Retirer la référence de l'utilisateur courant
               return existingRefs.filter(
-                (ref) => String(readField("id", ref)) !== String(currentUser.id)
+                (ref: Reference) => String(readField("id", ref)) !== String(currentUser!.id)
               );
             }
           },
@@ -104,7 +111,7 @@ export default function PostCard({ post }) {
   // ── LIKE subscription: met à jour le compteur si un autre like ──
   useSubscription(LIKE_TOGGLED, {
     onData: ({ data: { data } }) => {
-      const evt = data?.likeToggled;
+      const evt = (data as Record<string, { postId: string; likeCount: number; userId: string }> | null)?.likeToggled;
       if (!evt || String(evt.postId) !== String(post.id)) return;
       const postId = cache.identify({ __typename: "Post", id: post.id });
       if (!postId) return;
@@ -126,16 +133,18 @@ export default function PostCard({ post }) {
   const [addComment] = useMutation(ADD_COMMENT, {
     optimisticResponse: {
       addComment: {
-        __typename: "Comment",
+        __typename: "Comment" as const,
         id: `temp-comment-${Date.now()}`,
         text: commentText.trim(),
         createdAt: new Date().toISOString(),
         parentId: replyTo ? replyTo.id : null,
-        author: { __typename: "User", id: currentUser.id, name: currentUser.name },
-        post: { __typename: "Post", id: post.id },
+        author: { __typename: "User" as const, id: currentUser!.id, name: currentUser!.name },
+        post: { __typename: "Post" as const, id: post.id },
       },
     },
-    update: (cache, { data: { addComment: newComment } }) => {
+    update: (cache, { data }) => {
+      const newComment = (data as Record<string, { id: string; text: string; createdAt: string; parentId: string | null; author: { id: string; name: string }; post: { id: string } }> | null)?.addComment;
+      if (!newComment) return;
       const postId = cache.identify({ __typename: "Post", id: post.id });
       cache.modify({
         id: postId,
@@ -143,7 +152,7 @@ export default function PostCard({ post }) {
           comments: (existingRefs = [], { readField }) => {
             // Éviter les doublons (optimistic → réel)
             const exists = existingRefs.some(
-              (ref) => String(readField("id", ref)) === String(newComment.id)
+              (ref: Reference) => String(readField("id", ref)) === String(newComment.id)
             );
             if (exists) return existingRefs;
             const commentRef = cache.writeFragment({
@@ -170,7 +179,7 @@ export default function PostCard({ post }) {
         fields: {
           posts: (existingRefs = [], { readField }) => {
             return existingRefs.filter(
-              (ref) => String(readField("id", ref)) !== String(post.id)
+              (ref: Reference) => String(readField("id", ref)) !== String(post.id)
             );
           },
         },
@@ -182,7 +191,7 @@ export default function PostCard({ post }) {
   const [updatePost] = useMutation(UPDATE_POST, {
     optimisticResponse: {
       updatePost: {
-        __typename: "Post",
+        __typename: "Post" as const,
         id: post.id,
         title: editTitle.trim(),
         content: editContent.trim(),
@@ -191,7 +200,9 @@ export default function PostCard({ post }) {
         author: post.author,
       },
     },
-    update: (cache, { data: { updatePost: updated } }) => {
+    update: (cache, { data }) => {
+      const updated = (data as Record<string, { title: string; content: string; imageUrl: string | null }> | null)?.updatePost;
+      if (!updated) return;
       const postId = cache.identify({ __typename: "Post", id: post.id });
       cache.modify({
         id: postId,
@@ -218,7 +229,7 @@ export default function PostCard({ post }) {
       setCommentText("");
       setReplyTo(null);
       setShowComments(true);
-    } catch (err) { showToast(err.message, "error"); }
+    } catch (err) { showToast(err instanceof Error ? err.message : "Erreur", "error"); }
   };
 
   const handleDelete = async () => {
@@ -227,7 +238,7 @@ export default function PostCard({ post }) {
     try {
       await deletePost({ variables: { id: String(post.id) } });
       showToast("Publication supprimée");
-    } catch (err) { showToast(err.message, "error"); }
+    } catch (err) { showToast(err instanceof Error ? err.message : "Erreur", "error"); }
   };
 
   const handleSaveEdit = async () => {
@@ -242,7 +253,7 @@ export default function PostCard({ post }) {
       });
       setEditing(false);
       showToast("Publication modifiée");
-    } catch (err) { showToast(err.message, "error"); }
+    } catch (err) { showToast(err instanceof Error ? err.message : "Erreur", "error"); }
   };
 
   const handleCancelEdit = () => {
@@ -280,11 +291,11 @@ export default function PostCard({ post }) {
     <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xs)" }} className="p-6 transition-shadow duration-200 hover:shadow-[var(--shadow-sm)]">
       <div className="flex items-center gap-3 mb-3">
         <div className="w-9 h-9 rounded-full grid place-items-center font-bold text-[0.8rem] text-white shrink-0 cursor-pointer transition-opacity duration-150 hover:opacity-75" style={{ background: getAvatarGradient(post.author.id) }}
-          onClick={() => openProfile?.(post.author)}>
+          onClick={() => openProfile?.(post.author as User)}>
           {post.author.name.charAt(0)}
         </div>
         <div>
-          <div className="font-bold text-[0.88rem] cursor-pointer transition-opacity duration-150 hover:opacity-75" style={{ color: "var(--text)" }} onClick={() => openProfile?.(post.author)}>
+          <div className="font-bold text-[0.88rem] cursor-pointer transition-opacity duration-150 hover:opacity-75" style={{ color: "var(--text)" }} onClick={() => openProfile?.(post.author as User)}>
             {post.author.name}
           </div>
           <div style={{ color: "var(--text-tertiary)" }} className="text-[0.72rem] font-['DM_Mono',monospace]">{timeAgo(post.createdAt)}</div>
@@ -388,7 +399,7 @@ export default function PostCard({ post }) {
                 key={c.id}
                 comment={c}
                 onReply={setReplyTo}
-                replies={post.comments.filter((r) => r.parentId === c.id)}
+                replies={post.comments.filter((r) => r.parentId === c.id) as never}
                 depth={0}
               />
             ))}
@@ -409,7 +420,7 @@ export default function PostCard({ post }) {
               style={{ border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", borderRadius: "var(--radius-full)" }}
               className="flex-1 py-2 px-3.5 text-[0.82rem] font-['Inter',inherit] outline-none transition-colors duration-200 focus:ring-2 focus:ring-[var(--accent-soft)] placeholder:text-[var(--text-tertiary)]"
             />
-            <button style={{ background: "var(--accent)", color: "#fff" }} className="w-[34px] h-[34px] rounded-full border-none cursor-pointer grid place-items-center transition-colors duration-200 shrink-0" onClick={handleSendComment} onMouseEnter={(e) => e.target.style.background = "var(--accent-hover)"} onMouseLeave={(e) => e.target.style.background = "var(--accent)"}>
+            <button style={{ background: "var(--accent)", color: "#fff" }} className="w-[34px] h-[34px] rounded-full border-none cursor-pointer grid place-items-center transition-colors duration-200 shrink-0" onClick={handleSendComment} onMouseEnter={(e) => (e.target as HTMLButtonElement).style.background = "var(--accent-hover)"} onMouseLeave={(e) => (e.target as HTMLButtonElement).style.background = "var(--accent)"}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
                 <line x1="22" y1="2" x2="11" y2="13"/>
                 <polygon points="22 2 15 22 11 13 2 9 22 2"/>
@@ -421,7 +432,7 @@ export default function PostCard({ post }) {
       {showCropModal && editImageUrl && (
         <ImageCropModal
           imageSrc={editImageUrl}
-          onCrop={(cropped) => { setEditImageUrl(cropped); setShowCropModal(false); }}
+          onCrop={(cropped: string) => { setEditImageUrl(cropped); setShowCropModal(false); }}
           onCancel={() => setShowCropModal(false)}
         />
       )}
