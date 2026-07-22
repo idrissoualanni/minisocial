@@ -1,36 +1,31 @@
 // client/src/pages/LoginPage.jsx
 import { useState } from "react";
-import { useMutation } from "@apollo/client/react";
-import { gql } from "@apollo/client";
+import { signIn } from "../lib/auth-client";
 import useStore from "../store";
-
-const LOGIN = gql`
-  mutation Login($email: String!, $password: String!) {
-    login(email: $email, password: $password) {
-      accessToken refreshToken
-      user { id name email role }
-    }
-  }
-`;
 
 export default function LoginPage({ onSwitchToRegister }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const setAuth = useStore((s) => s.setAuth);
   const showToast = useStore((s) => s.showToast);
-
-  const [login] = useMutation(LOGIN);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
-      const { data } = await login({ variables: { email, password } });
-      setAuth(data.login.user, data.login.accessToken, data.login.refreshToken);
-      showToast(`Bienvenue ${data.login.user.name} !`);
+      const { data, error } = await signIn.email({
+        email,
+        password,
+      });
+      if (error) {
+        setError(error.message || "Email ou mot de passe incorrect");
+        return;
+      }
+      showToast(`Bienvenue !`);
+      // Reload to trigger useSession in App
+      window.location.reload();
     } catch (err) {
       setError(err.message);
     }

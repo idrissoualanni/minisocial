@@ -2,7 +2,7 @@
 // db.js — Module SQLite (better-sqlite3)
 // ============================================================
 // Crée/ouvre la base de données, initialise le schéma,
-// et insère les données de test si la base est vide.
+// et gère la migration vers Better Auth.
 // ============================================================
 
 import Database from "better-sqlite3";
@@ -21,15 +21,17 @@ db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
 // ============================================================
-// SCHÉMA
+// SCHÉMA APPLICATION (tables métier)
 // ============================================================
 db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT    NOT NULL,
-    email      TEXT    NOT NULL UNIQUE,
-    last_seen  TEXT    DEFAULT (datetime('now')),
-    created_at TEXT    DEFAULT (datetime('now'))
+  CREATE TABLE IF NOT EXISTS app_users (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ba_user_id  TEXT    UNIQUE,  -- Better Auth user.id (UUID TEXT)
+    name        TEXT    NOT NULL,
+    email       TEXT    NOT NULL UNIQUE,
+    last_seen   TEXT    DEFAULT (datetime('now')),
+    created_at  TEXT    DEFAULT (datetime('now')),
+    bio         TEXT    DEFAULT ''
   );
 
   CREATE TABLE IF NOT EXISTS posts (
@@ -39,7 +41,7 @@ db.exec(`
     author_id  INTEGER NOT NULL,
     image_url  TEXT,
     created_at TEXT    DEFAULT (datetime('now')),
-    FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (author_id) REFERENCES app_users(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS comments (
@@ -49,7 +51,7 @@ db.exec(`
     post_id    INTEGER NOT NULL,
     parent_id  INTEGER,
     created_at TEXT    DEFAULT (datetime('now')),
-    FOREIGN KEY (author_id)  REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (author_id)  REFERENCES app_users(id) ON DELETE CASCADE,
     FOREIGN KEY (post_id)    REFERENCES posts(id) ON DELETE CASCADE,
     FOREIGN KEY (parent_id)  REFERENCES comments(id) ON DELETE CASCADE
   );
@@ -61,19 +63,19 @@ db.exec(`
     receiver_id INTEGER NOT NULL,
     read        INTEGER DEFAULT 0,
     created_at  TEXT    DEFAULT (datetime('now')),
-    FOREIGN KEY (sender_id)   REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (sender_id)   REFERENCES app_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (receiver_id) REFERENCES app_users(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS chat_permissions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     sender_id   INTEGER NOT NULL,
     receiver_id INTEGER NOT NULL,
-    status      TEXT    NOT NULL DEFAULT 'pending',  -- pending | accepted | rejected
+    status      TEXT    NOT NULL DEFAULT 'pending',
     created_at  TEXT    DEFAULT (datetime('now')),
     updated_at  TEXT    DEFAULT (datetime('now')),
-    FOREIGN KEY (sender_id)   REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY (receiver_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (sender_id)   REFERENCES app_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (receiver_id) REFERENCES app_users(id) ON DELETE CASCADE,
     UNIQUE(sender_id, receiver_id)
   );
 
@@ -82,7 +84,7 @@ db.exec(`
     post_id    INTEGER NOT NULL,
     created_at TEXT    DEFAULT (datetime('now')),
     PRIMARY KEY (user_id, post_id),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES app_users(id) ON DELETE CASCADE,
     FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
   );
 
@@ -91,7 +93,7 @@ db.exec(`
     name       TEXT    NOT NULL,
     creator_id INTEGER NOT NULL,
     created_at TEXT    DEFAULT (datetime('now')),
-    FOREIGN KEY (creator_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (creator_id) REFERENCES app_users(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS group_members (
@@ -101,7 +103,7 @@ db.exec(`
     joined_at  TEXT    DEFAULT (datetime('now')),
     PRIMARY KEY (group_id, user_id),
     FOREIGN KEY (group_id) REFERENCES chat_groups(id) ON DELETE CASCADE,
-    FOREIGN KEY (user_id)  REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id)  REFERENCES app_users(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS group_messages (
@@ -110,26 +112,8 @@ db.exec(`
     sender_id  INTEGER NOT NULL,
     group_id   INTEGER NOT NULL,
     created_at TEXT    DEFAULT (datetime('now')),
-    FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (sender_id) REFERENCES app_users(id) ON DELETE CASCADE,
     FOREIGN KEY (group_id)  REFERENCES chat_groups(id) ON DELETE CASCADE
-  );
-`);
-
-// ============================================================
-// AUTH MIGRATION (idempotent)
-// ============================================================
-try { db.prepare("ALTER TABLE users ADD COLUMN password_hash TEXT").run(); } catch {}
-try { db.prepare("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'").run(); } catch {}
-try { db.prepare("ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''").run(); } catch {}
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS refresh_tokens (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id    INTEGER NOT NULL,
-    token      TEXT    NOT NULL UNIQUE,
-    expires_at DATETIME NOT NULL,
-    created_at DATETIME DEFAULT (datetime('now')),
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS meetings (
@@ -138,7 +122,7 @@ db.exec(`
     creator_id INTEGER NOT NULL,
     is_active  INTEGER DEFAULT 1,
     created_at TEXT    DEFAULT (datetime('now')),
-    FOREIGN KEY (creator_id) REFERENCES users(id)
+    FOREIGN KEY (creator_id) REFERENCES app_users(id)
   );
 
   CREATE TABLE IF NOT EXISTS meeting_participants (
@@ -148,7 +132,45 @@ db.exec(`
     joined_at  TEXT    DEFAULT (datetime('now')),
     UNIQUE(meeting_id, user_id),
     FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
-    FOREIGN KEY (user_id)    REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id)    REFERENCES app_users(id) ON DELETE CASCADE
   );
 `);
+
+// ============================================================
+// MIGRATION : users → app_users (idempotent)
+// ============================================================
+const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(t => t.name);
+
+if (tables.includes("users") && !tables.includes("app_users")) {
+  console.log("🔄 Migration: users → app_users...");
+  db.pragma("foreign_keys = OFF");
+  db.exec(`ALTER TABLE users RENAME TO app_users;`);
+  db.pragma("foreign_keys = ON");
+  try { db.prepare("ALTER TABLE app_users ADD COLUMN ba_user_id TEXT UNIQUE").run(); } catch {}
+  db.exec(`DROP TABLE IF EXISTS refresh_tokens;`);
+  console.log("✅ Migration terminée.");
+} else if (tables.includes("users") && tables.includes("app_users")) {
+  db.pragma("foreign_keys = OFF");
+  db.exec(`DROP TABLE IF EXISTS users;`);
+  db.exec(`DROP TABLE IF EXISTS refresh_tokens;`);
+  db.pragma("foreign_keys = ON");
+}
+
+// Ensure ba_user_id column exists (for fresh DBs or partial migrations)
+try { db.prepare("ALTER TABLE app_users ADD COLUMN ba_user_id TEXT UNIQUE").run(); } catch {}
+
+// ============================================================
+// HELPER : Créer un app_users à partir d'un Better Auth user
+// ============================================================
+export function ensureAppUser(baUser) {
+  let appUser = db.prepare("SELECT * FROM app_users WHERE ba_user_id = ?").get(baUser.id);
+  if (!appUser) {
+    const result = db.prepare(
+      "INSERT INTO app_users (ba_user_id, name, email, bio) VALUES (?, ?, ?, ?)"
+    ).run(baUser.id, baUser.name, baUser.email, baUser.bio || "");
+    appUser = db.prepare("SELECT * FROM app_users WHERE id = ?").get(result.lastInsertRowid);
+  }
+  return appUser;
+}
+
 export default db;

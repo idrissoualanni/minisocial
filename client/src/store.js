@@ -7,32 +7,9 @@ let toastId = 0;
 const useStore = create(
   persist(
     (set, get) => ({
-      // --- Auth ---
+      // --- Auth (synced from Better Auth session via App.jsx GET_ME) ---
       currentUser: null,
-      accessToken: null,
-      refreshToken: null,
-
-      setAuth: (user, access, refresh) =>
-        set({ currentUser: user, accessToken: access, refreshToken: refresh }),
-
-      logout: () => {
-        const { refreshToken } = get();
-        if (refreshToken) {
-          fetch("http://localhost:4000/graphql", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              query: `mutation { logout(refreshToken: "${refreshToken}") }`,
-            }),
-          }).catch(() => {});
-        }
-        set({ currentUser: null, accessToken: null, refreshToken: null });
-      },
-
-      updateProfile: (updates) =>
-        set((state) => ({
-          currentUser: state.currentUser ? { ...state.currentUser, ...updates } : null,
-        })),
+      setCurrentUser: (user) => set({ currentUser: user }),
 
       // --- UI ---
       view: "feed",
@@ -79,14 +56,12 @@ const useStore = create(
         state.addToast(msg, type === "error" ? "error" : type === "success" ? "success" : "info", 3000);
       },
 
-      toast: null, // legacy, non utilisé
+      toast: null,
     }),
     {
       name: "minisocial-store",
       partialize: (state) => ({
         currentUser: state.currentUser,
-        accessToken: state.accessToken,
-        refreshToken: state.refreshToken,
       }),
     }
   )

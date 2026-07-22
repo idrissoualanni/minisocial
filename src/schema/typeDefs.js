@@ -15,12 +15,6 @@ const typeDefs = `#graphql
     postCount: Int!
   }
 
-  type AuthPayload {
-    accessToken: String!
-    refreshToken: String!
-    user: User!
-  }
-
   type Meeting {
     id: ID!
     title: String!
@@ -141,7 +135,6 @@ const typeDefs = `#graphql
   type Query {
     # Auth
     me: User
-    refreshAccessToken(refreshToken: String!): AuthPayload!
     # Users
     posts: [Post!]!
     post(id: ID!): Post
@@ -164,12 +157,7 @@ const typeDefs = `#graphql
 
   # ---- MUTATIONS ----
   type Mutation {
-    # Auth
-    register(name: String!, email: String!, password: String!): AuthPayload!
-    login(email: String!, password: String!): AuthPayload!
-    logout(refreshToken: String!): Boolean!
     # Users
-    createUser(name: String!, email: String!): User!
     updateUser(id: ID!, name: String, email: String, bio: String): User!
     # Posts
     createPost(title: String!, content: String!, imageUrl: String): Post!

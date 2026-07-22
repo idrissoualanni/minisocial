@@ -1,17 +1,7 @@
 // client/src/pages/RegisterPage.jsx
 import { useState } from "react";
-import { useMutation } from "@apollo/client/react";
-import { gql } from "@apollo/client";
+import { signUp } from "../lib/auth-client";
 import useStore from "../store";
-
-const REGISTER = gql`
-  mutation Register($name: String!, $email: String!, $password: String!) {
-    register(name: $name, email: $email, password: $password) {
-      accessToken refreshToken
-      user { id name email role }
-    }
-  }
-`;
 
 export default function RegisterPage({ onSwitchToLogin }) {
   const [name, setName] = useState("");
@@ -19,10 +9,7 @@ export default function RegisterPage({ onSwitchToLogin }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const setAuth = useStore((s) => s.setAuth);
   const showToast = useStore((s) => s.showToast);
-
-  const [register] = useMutation(REGISTER);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -33,9 +20,18 @@ export default function RegisterPage({ onSwitchToLogin }) {
     }
     setLoading(true);
     try {
-      const { data } = await register({ variables: { name, email, password } });
-      setAuth(data.register.user, data.register.accessToken, data.register.refreshToken);
-      showToast(`Bienvenue ${data.register.user.name} !`);
+      const { data, error } = await signUp.email({
+        name,
+        email,
+        password,
+      });
+      if (error) {
+        setError(error.message || "Erreur lors de l'inscription");
+        return;
+      }
+      showToast(`Bienvenue ${data.user.name} !`);
+      // Reload to trigger useSession in App
+      window.location.reload();
     } catch (err) {
       setError(err.message);
     }

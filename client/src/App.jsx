@@ -2,6 +2,7 @@
 import { useQuery, useSubscription } from "@apollo/client/react";
 import { gql } from "@apollo/client";
 import useStore from "./store";
+import { useSession, signOut } from "./lib/auth-client";
 import Header from "./components/Header";
 import Feed from "./components/Feed";
 import ChatLobby from "./components/ChatLobby";
@@ -15,10 +16,16 @@ import Meeting from "./components/Meeting";
 import IncomingCall from "./components/IncomingCall";
 import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNotificationSetup } from "./hooks/useNotifications";
 import { useHeartbeat } from "./hooks/useHeartbeat";
 import useSystemNotifications from "./hooks/useSystemNotifications";
+
+const GET_ME = gql`
+  query GetMe {
+    me { id name email role bio }
+  }
+`;
 
 const GET_USERS = gql`
   query GetUsers {
@@ -37,16 +44,36 @@ const MEETING_INVITED_SUB = gql`
 `;
 
 export default function App() {
-  const currentUser = useStore((s) => s.currentUser);
+  const { data: session, isPending } = useSession();
+  const setCurrentUser = useStore((s) => s.setCurrentUser);
   const view = useStore((s) => s.view);
   const chatTarget = useStore((s) => s.chatTarget);
   const groupTarget = useStore((s) => s.groupTarget);
   const profileUser = useStore((s) => s.profileUser);
   const meetingTarget = useStore((s) => s.meetingTarget);
-  const toast = useStore((s) => s.toast);
 
   const [authView, setAuthView] = useState("login");
   const [incomingCall, setIncomingCall] = useState(null);
+
+  // Fetch full user data from our app_users via GraphQL
+  const { data: meData } = useQuery(GET_ME, {
+    skip: !session,
+    fetchPolicy: "cache-and-network",
+  });
+
+  const currentUser = meData?.me || null;
+
+  // Sync currentUser into Zustand store so child components can access it
+  useEffect(() => {
+    setCurrentUser(currentUser);
+  }, [currentUser, setCurrentUser]);
+
+  // Clear store on logout
+  useEffect(() => {
+    if (!session && !isPending) {
+      setCurrentUser(null);
+    }
+  }, [session, isPending, setCurrentUser]);
 
   useNotificationSetup();
   useHeartbeat(currentUser);
@@ -61,16 +88,26 @@ export default function App() {
     onData: ({ data: { data } }) => {
       const inv = data?.meetingInvited;
       if (!inv) return;
-      // Ignorer si on est l'appelant
       if (String(inv.fromUser?.id) === String(currentUser?.id)) return;
-      // Ignorer si on est déjà en meeting
       if (view === "meeting") return;
       setIncomingCall(inv);
     },
   });
 
+  // --- Loading state ---
+  if (isPending) {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <p>Chargement...</p>
+        </div>
+        <Toast />
+      </div>
+    );
+  }
+
   // --- Non authentifié ---
-  if (!currentUser) {
+  if (!session) {
     return (
       <>
         {authView === "login" ? (
@@ -86,7 +123,7 @@ export default function App() {
   // --- Authentifié ---
   return (
     <div className="min-h-screen bg-[var(--bg)] text-[var(--text)] font-['Inter',-apple-system,BlinkMacSystemFont,sans-serif]">
-      <Header />
+      <Header user={currentUser} onSignOut={signOut} />
 
       {view === "feed" && (
         <div className="max-w-[1120px] mx-auto grid grid-cols-[1fr_300px] gap-8 p-6 max-[860px]:grid-cols-1">

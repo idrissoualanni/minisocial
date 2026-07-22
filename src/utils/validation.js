@@ -1,18 +1,6 @@
 // src/utils/validation.js
 import { z } from "zod";
 
-// --- Auth ---
-export const RegisterSchema = z.object({
-  name: z.string().min(2, "Le nom doit avoir au moins 2 caractères").max(50),
-  email: z.string().email("Email invalide"),
-  password: z.string().min(6, "Le mot de passe doit avoir au moins 6 caractères").max(128),
-});
-
-export const LoginSchema = z.object({
-  email: z.string().email("Email invalide"),
-  password: z.string().min(1, "Mot de passe requis"),
-});
-
 // --- Posts ---
 export const CreatePostSchema = z.object({
   title: z.string().min(1, "Titre requis").max(120),

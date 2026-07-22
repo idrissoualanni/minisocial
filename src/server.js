@@ -1,5 +1,6 @@
 // ============================================================
 // server.js — Apollo Server + WebSocket (subscriptions)
+// + Better Auth (/api/auth/*)
 // ============================================================
 
 import { ApolloServer } from "@apollo/server";
@@ -13,12 +14,16 @@ import { useServer } from "graphql-ws/use/ws";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { existsSync } from "fs";
+import { toNodeHandler } from "better-auth/node";
+
+// db MUST be imported first — it runs the schema migration
+import db from "./db.js";
 
 import typeDefs from "./schema/typeDefs.js";
 import resolvers from "./resolvers/resolvers.js";
 import { contextFn } from "./middleware/auth.js";
 import { globalLimiter } from "./middleware/rateLimit.js";
-import db from "./db.js";
+import { auth } from "./auth.js";
 
 // --- Paths ---
 const __filename = fileURLToPath(import.meta.url);
@@ -32,27 +37,27 @@ const app = express();
 const httpServer = createServer(app);
 const PORT = 4000;
 
+// --- Better Auth handler (AVANT express.json) ---
+app.all("/api/auth/*", toNodeHandler(auth));
+
 // --- WebSocket Server (pour les subscriptions) ---
 const wsServer = new WebSocketServer({
   server: httpServer,
   path: "/graphql",
 });
 
-const userById = db.prepare("SELECT * FROM users WHERE id = ?");
-
 const serverCleanup = useServer(
   {
     schema,
     context: async (ctx) => {
-      const token = ctx.connectionParams?.authorization;
-      if (!token?.startsWith("Bearer ")) return { user: null };
-      try {
-        const { verifyAccessToken } = await import("./utils/tokens.js");
-        const payload = verifyAccessToken(token.slice(7));
-        return { user: userById.get(payload.sub) || null };
-      } catch {
-        return { user: null };
+      // Better Auth: lire les cookies depuis la requête HTTP upgrade initiale
+      const req = ctx.extra?.request;
+      if (req) {
+        return contextFn({ req });
       }
+      // Fallback: utiliser connectionParams (si le client envoie le token)
+      const headers = ctx.connectionParams || {};
+      return contextFn({ req: { headers } });
     },
   },
   wsServer
@@ -82,7 +87,7 @@ app.use("/graphql", globalLimiter);
 // --- Middleware ---
 app.use(
   "/graphql",
-  cors({ origin: ["http://localhost:5173", "http://localhost:4000"] }),
+  cors({ origin: ["http://localhost:5173", "http://localhost:4000"], credentials: true }),
   express.json({ limit: "10mb" }),
   expressMiddleware(server, { context: contextFn })
 );
@@ -102,5 +107,6 @@ if (existsSync(indexPath)) {
 httpServer.listen(PORT, () => {
   console.log(`\n🚀 GraphQL HTTP  → http://localhost:${PORT}/graphql`);
   console.log(`🔌 GraphQL WS    → ws://localhost:${PORT}/graphql`);
+  console.log(`🔐 Better Auth   → http://localhost:${PORT}/api/auth`);
   console.log(`🌐 Frontend      → http://localhost:${PORT}\n`);
 });

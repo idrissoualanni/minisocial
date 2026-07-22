@@ -33,11 +33,14 @@ const NAV_ITEMS = [
   },
 ];
 
-export default function Header() {
-  const currentUser = useStore((s) => s.currentUser);
+export default function Header({ user: currentUser, onSignOut }) {
   const view = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
-  const logout = useStore((s) => s.logout);
+
+  const logout = async () => {
+    await onSignOut();
+    window.location.reload();
+  };
 
   return (
     <header className="sticky top-0 z-[100] border-b border-[var(--border)]" style={{ background: "rgba(250, 251, 252, 0.85)", backdropFilter: "blur(16px) saturate(180%)", WebkitBackdropFilter: "blur(16px) saturate(180%)" }}>

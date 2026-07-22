@@ -52,20 +52,23 @@ const errorLink = onError(({ graphQLErrors, networkError }) => {
   }
 });
 
-// Auth link: injecte le token dans chaque requête HTTP
+// Auth link: Better Auth utilise des cookies HttpOnly — pas besoin de Bearer token
+// On s'assure juste que les credentials sont envoyés
 const authLink = new ApolloLink((operation, forward) => {
-  const token = useStore.getState().accessToken;
   operation.setContext(({ headers = {} }) => ({
     headers: {
       ...headers,
-      authorization: token ? `Bearer ${token}` : "",
     },
+    credentials: "include",
   }));
   return forward(operation);
 });
 
-// HTTP link
-const httpLink = new HttpLink({ uri: GRAPHQL_HTTP });
+// HTTP link — credentials: include pour envoyer les cookies Better Auth
+const httpLink = new HttpLink({
+  uri: GRAPHQL_HTTP,
+  credentials: "include",
+});
 
 // ── WebSocket link — optimisé selon docs graphql-ws ──
 // - keepAlive: ping serveur toutes les 15s pour détecter les connexions mortes
@@ -100,8 +103,9 @@ const wsLink = new GraphQLWsLink(
       closed: () => {},
     },
     connectionParams: () => {
-      const token = useStore.getState().accessToken;
-      return { authorization: token ? `Bearer ${token}` : "" };
+      // Better Auth utilise des cookies HttpOnly — le navigateur les envoie automatiquement
+      // Pour les WS cross-origin, on peut passer le token via headers
+      return {};
     },
   })
 );

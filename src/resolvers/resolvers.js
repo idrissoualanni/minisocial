@@ -1,18 +1,15 @@
 // ============================================================
 // resolvers.js — Queries, Mutations, Subscriptions
 // ============================================================
-// PubSub = "radio" interne au serveur.
-// Messages chiffrés AES-256-GCM avant stockage en BDD.
-// Permissions de chat, typing indicator, groupes, recherche.
+// Auth via Better Auth (HTTP endpoints /api/auth/*).
+// Les resolvers GraphQL gèrent uniquement les données métier.
 // ============================================================
 
 import db from "../db.js";
 import { PubSub } from "graphql-subscriptions";
 import { encrypt, decrypt } from "../crypto.js";
 import natural from "natural";
-import bcrypt from "bcrypt";
-import { validate, RegisterSchema, LoginSchema, CreateMeetingSchema } from "../utils/validation.js";
-import { signAccessToken, signRefreshToken, verifyRefreshToken } from "../utils/tokens.js";
+import { validate, CreateMeetingSchema } from "../utils/validation.js";
 
 const pubsub = new PubSub();
 
@@ -32,17 +29,17 @@ const EVENTS = {
   MEETING_INVITED: "MEETING_INVITED",
 };
 
-// --- Requêtes précompilées ---
+// --- Requêtes précompilées (app_users) ---
 const stmts = {
-  allUsers: db.prepare("SELECT * FROM users ORDER BY id"),
-  userById: db.prepare("SELECT * FROM users WHERE id = ?"),
+  allUsers: db.prepare("SELECT * FROM app_users ORDER BY id"),
+  userById: db.prepare("SELECT * FROM app_users WHERE id = ?"),
+  userByEmail: db.prepare("SELECT * FROM app_users WHERE email = ?"),
   allPosts: db.prepare("SELECT * FROM posts ORDER BY created_at DESC"),
   postsByAuthor: db.prepare("SELECT * FROM posts WHERE author_id = ? ORDER BY created_at DESC"),
   postById: db.prepare("SELECT * FROM posts WHERE id = ?"),
   commentsByPost: db.prepare("SELECT * FROM comments WHERE post_id = ? AND parent_id IS NULL ORDER BY created_at ASC"),
   commentsByParent: db.prepare("SELECT * FROM comments WHERE parent_id = ? ORDER BY created_at ASC"),
   countPostsByUser: db.prepare("SELECT COUNT(*) as count FROM posts WHERE author_id = ?"),
-  insertUser: db.prepare("INSERT INTO users (name, email) VALUES (?, ?)"),
   insertPost: db.prepare("INSERT INTO posts (title, content, author_id, image_url) VALUES (?, ?, ?, ?)"),
   insertComment: db.prepare("INSERT INTO comments (text, author_id, post_id, parent_id) VALUES (?, ?, ?, ?)"),
 
@@ -58,7 +55,7 @@ const stmts = {
   ),
   messageById: db.prepare("SELECT * FROM messages WHERE id = ?"),
   markAsRead: db.prepare("UPDATE messages SET read = 1 WHERE id = ?"),
-  updateLastSeen: db.prepare("UPDATE users SET last_seen = datetime('now') WHERE id = ?"),
+  updateLastSeen: db.prepare("UPDATE app_users SET last_seen = datetime('now') WHERE id = ?"),
 
   // --- Permissions ---
   permissionBetween: db.prepare(`
@@ -96,7 +93,7 @@ const stmts = {
   hasLiked: db.prepare("SELECT 1 FROM post_likes WHERE user_id = ? AND post_id = ?"),
   likeCount: db.prepare("SELECT COUNT(*) as count FROM post_likes WHERE post_id = ?"),
   likedUsers: db.prepare(`
-    SELECT u.* FROM users u JOIN post_likes pl ON u.id = pl.user_id WHERE pl.post_id = ?
+    SELECT u.* FROM app_users u JOIN post_likes pl ON u.id = pl.user_id WHERE pl.post_id = ?
   `),
   toggleLikeOn: db.prepare("INSERT OR IGNORE INTO post_likes (user_id, post_id) VALUES (?, ?)"),
   toggleLikeOff: db.prepare("DELETE FROM post_likes WHERE user_id = ? AND post_id = ?"),
@@ -107,7 +104,7 @@ const stmts = {
   insertGroupMember: db.prepare("INSERT OR IGNORE INTO group_members (group_id, user_id, is_creator) VALUES (?, ?, ?)"),
   groupMembers: db.prepare(`
     SELECT gm.*, u.name, u.email, u.last_seen
-    FROM group_members gm JOIN users u ON gm.user_id = u.id
+    FROM group_members gm JOIN app_users u ON gm.user_id = u.id
     WHERE gm.group_id = ?
   `),
   isGroupMember: db.prepare("SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?"),
@@ -127,18 +124,12 @@ const stmts = {
   `),
   removeGroupMember: db.prepare("DELETE FROM group_members WHERE group_id = ? AND user_id = ?"),
 
-  // --- Auth ---
-  insertUserAuth: db.prepare("INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, 'user')"),
-  userByEmail: db.prepare("SELECT * FROM users WHERE email = ?"),
-  insertRefreshToken: db.prepare("INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, datetime('now', '+7 days'))"),
-  deleteRefreshToken: db.prepare("DELETE FROM refresh_tokens WHERE token = ?"),
-
   // --- Meetings ---
   insertMeeting: db.prepare("INSERT INTO meetings (title, creator_id) VALUES (?, ?)"),
   meetingById: db.prepare("SELECT * FROM meetings WHERE id = ?"),
   allMeetings: db.prepare("SELECT * FROM meetings WHERE is_active = 1"),
   insertMeetingParticipant: db.prepare("INSERT OR IGNORE INTO meeting_participants (meeting_id, user_id) VALUES (?, ?)"),
-  meetingParticipants: db.prepare("SELECT u.* FROM users u JOIN meeting_participants mp ON u.id = mp.user_id WHERE mp.meeting_id = ?"),
+  meetingParticipants: db.prepare("SELECT u.* FROM app_users u JOIN meeting_participants mp ON u.id = mp.user_id WHERE mp.meeting_id = ?"),
   removeMeetingParticipant: db.prepare("DELETE FROM meeting_participants WHERE meeting_id = ? AND user_id = ?"),
 };
 
@@ -154,26 +145,10 @@ const resolvers = {
   // QUERIES
   // ==========================================================
   Query: {
-    // --- Auth ---
+    // --- Auth (via Better Auth session) ---
     me: (_, __, { user }) => {
       if (!user) throw new Error("Non authentifié");
       return user;
-    },
-
-    refreshAccessToken: (_, { refreshToken }) => {
-      const payload = verifyRefreshToken(refreshToken);
-      const stored = db.prepare("SELECT 1 FROM refresh_tokens WHERE token = ?").get(refreshToken);
-      if (!stored) throw new Error("Refresh token révoqué");
-      const user = stmts.userById.get(payload.sub);
-      if (!user) throw new Error("Utilisateur introuvable");
-      stmts.deleteRefreshToken.run(refreshToken);
-      const newRefreshToken = signRefreshToken(user);
-      stmts.insertRefreshToken.run(user.id, newRefreshToken);
-      return {
-        accessToken: signAccessToken(user),
-        refreshToken: newRefreshToken,
-        user,
-      };
     },
 
     // --- Users ---
@@ -236,41 +211,32 @@ const resolvers = {
       const stemmer = natural.PorterStemmerFr;
       const tfidf = new natural.TfIdf();
 
-      // Supprimer les diacritiques (é→e, è→e, ê→e, etc.)
       const stripDiacritics = (str) =>
         str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
-      // Tokenizer + stem + strip accents
       const processText = (text) => {
         const lower = stripDiacritics(text.toLowerCase());
         const tokens = tokenizer.tokenize(lower);
         return tokens.map((t) => stemmer.stem(t)).join(" ");
       };
 
-      // Indexer chaque post (title + content + author)
       allPosts.forEach((post) => {
         const author = stmts.userById.get(post.author_id);
         const fullText = `${post.title} ${post.content} ${author ? author.name : ""}`;
         tfidf.addDocument(processText(fullText));
       });
 
-      // Traiter la requête
       const searchStr = processText(query);
-
-      // Scores par document
       const scores = [];
       tfidf.tfidfs(searchStr, (i, measure) => {
         if (measure > 0) scores.push({ index: i, score: measure });
       });
-
-      // Trier par score décroissant
       scores.sort((a, b) => b.score - a.score);
       return scores.map((s) => allPosts[s.index]);
     },
 
     // --- Groupes ---
     myGroups: (_, { userId }) => stmts.myGroups.all(userId),
-
     groupMessages: (_, { groupId, limit }) =>
       stmts.groupMessages.all(groupId, limit || 50).reverse(),
 
@@ -283,53 +249,15 @@ const resolvers = {
   // MUTATIONS
   // ==========================================================
   Mutation: {
-    // --- Auth ---
-    register: (_, args) => {
-      const data = validate(RegisterSchema, args);
-      const existing = stmts.userByEmail.get(data.email);
-      if (existing) throw new Error("Cet email est déjà utilisé");
-      const hash = bcrypt.hashSync(data.password, 10);
-      const result = stmts.insertUserAuth.run(data.name, data.email, hash);
-      const user = stmts.userById.get(result.lastInsertRowid);
-      const accessToken = signAccessToken(user);
-      const refreshToken = signRefreshToken(user);
-      stmts.insertRefreshToken.run(user.id, refreshToken);
-      return { accessToken, refreshToken, user };
-    },
-
-    login: (_, args) => {
-      const data = validate(LoginSchema, args);
-      const user = stmts.userByEmail.get(data.email);
-      if (!user || !bcrypt.compareSync(data.password, user.password_hash)) {
-        throw new Error("Email ou mot de passe incorrect");
-      }
-      const accessToken = signAccessToken(user);
-      const refreshToken = signRefreshToken(user);
-      stmts.insertRefreshToken.run(user.id, refreshToken);
-      return { accessToken, refreshToken, user };
-    },
-
-    logout: (_, { refreshToken }) => {
-      stmts.deleteRefreshToken.run(refreshToken);
-      return true;
-    },
-
     // --- Users ---
-    createUser: (_, { name, email }) => {
-      const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
-      if (existing) throw new Error("Cet email est déjà utilisé.");
-      const result = stmts.insertUser.run(name, email);
-      return stmts.userById.get(result.lastInsertRowid);
-    },
-
     updateUser: (_, { id, name, email, bio }) => {
       const user = stmts.userById.get(id);
       if (!user) throw new Error("Utilisateur introuvable.");
       if (email && email !== user.email) {
-        const dup = db.prepare("SELECT id FROM users WHERE email = ? AND id != ?").get(email, id);
+        const dup = db.prepare("SELECT id FROM app_users WHERE email = ? AND id != ?").get(email, id);
         if (dup) throw new Error("Cet email est déjà utilisé.");
       }
-      db.prepare("UPDATE users SET name = ?, email = ?, bio = ? WHERE id = ?").run(
+      db.prepare("UPDATE app_users SET name = ?, email = ?, bio = ? WHERE id = ?").run(
         name || user.name, email || user.email, bio ?? user.bio ?? "", id
       );
       return stmts.userById.get(id);
@@ -413,7 +341,6 @@ const resolvers = {
       const newMessage = stmts.messageById.get(result.lastInsertRowid);
       const decrypted = decryptMessage(newMessage);
       pubsub.publish(EVENTS.MESSAGE_SENT, { messageSent: decrypted });
-      // Publier aussi pour le subscription global (ChatLobby unreadCount)
       pubsub.publish(EVENTS.MESSAGE_SENT_TO_USER, { messageSentToUser: decrypted });
       return decrypted;
     },
@@ -555,7 +482,6 @@ const resolvers = {
       stmts.insertMeetingParticipant.run(meetingId, user.id);
       const meeting = stmts.meetingById.get(meetingId);
 
-      // Notifier l'utilisateur cible s'il y a un targetUserId
       if (args.targetUserId) {
         const fromUser = stmts.userById.get(user.id);
         pubsub.publish(EVENTS.MEETING_INVITED, {
