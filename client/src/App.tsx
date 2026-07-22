@@ -24,7 +24,7 @@ import useSystemNotifications from "./hooks/useSystemNotifications";
 interface IncomingCall {
   meetingId: string;
   meetingTitle: string;
-  fromUser: { id: string; name: string } | null;
+  fromUser?: { id: string; name: string };
   toUserId: string;
 }
 
@@ -99,7 +99,7 @@ export default function App() {
   useQuery(GET_USERS, { skip: !currentUser });
 
   // --- Subscription appel entrant ---
-  useSubscription(MEETING_INVITED_SUB, {
+  useSubscription<{ meetingInvited: IncomingCall }>(MEETING_INVITED_SUB, {
     variables: { userId: currentUser?.id },
     skip: !currentUser,
     onData: ({ data: { data } }) => {

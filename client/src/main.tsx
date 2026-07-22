@@ -5,7 +5,7 @@ import client from "./apollo";
 import App from "./App";
 import "./index.css";
 
-createRoot(document.getElementById("root")).render(
+createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ApolloProvider client={client}>
       <App />
