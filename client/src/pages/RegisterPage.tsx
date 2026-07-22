@@ -3,7 +3,11 @@ import { useState } from "react";
 import { signUp } from "../lib/auth-client";
 import useStore from "../store";
 
-export default function RegisterPage({ onSwitchToLogin }) {
+interface RegisterPageProps {
+  onSwitchToLogin: () => void;
+}
+
+export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -11,7 +15,7 @@ export default function RegisterPage({ onSwitchToLogin }) {
   const [loading, setLoading] = useState(false);
   const showToast = useStore((s) => s.showToast);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     if (password.length < 6) {
@@ -32,8 +36,8 @@ export default function RegisterPage({ onSwitchToLogin }) {
       showToast(`Bienvenue ${data.user.name} !`);
       // Reload to trigger useSession in App
       window.location.reload();
-    } catch (err) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Erreur inconnue");
     }
     setLoading(false);
   };

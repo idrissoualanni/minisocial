@@ -3,14 +3,18 @@ import { useState } from "react";
 import { signIn } from "../lib/auth-client";
 import useStore from "../store";
 
-export default function LoginPage({ onSwitchToRegister }) {
+interface LoginPageProps {
+  onSwitchToRegister: () => void;
+}
+
+export default function LoginPage({ onSwitchToRegister }: LoginPageProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const showToast = useStore((s) => s.showToast);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
@@ -26,8 +30,8 @@ export default function LoginPage({ onSwitchToRegister }) {
       showToast(`Bienvenue !`);
       // Reload to trigger useSession in App
       window.location.reload();
-    } catch (err) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Erreur inconnue");
     }
     setLoading(false);
   };
