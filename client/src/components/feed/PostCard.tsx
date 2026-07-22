@@ -7,12 +7,12 @@ import { useState } from "react";
 import { useMutation, useSubscription, useApolloClient } from "@apollo/client/react";
 import { gql, type Reference } from "@apollo/client";
 import CommentItem from "./CommentItem";
-import ImageCropModal from "./ImageCropModal";
-import { getAvatarGradient, timeAgo } from "../utils";
+import ImageCropModal from "../shared/ImageCropModal";
+import { getAvatarGradient, timeAgo } from "../../utils";
 import { GET_POSTS } from "./Feed";
-import useStore from "../store";
-import type { Post } from "../types";
-import type { User } from "../store";
+import useStore from "../../store";
+import type { Post } from "../../types";
+import type { User } from "../../store";
 
 interface PostCardProps {
   post: Post;

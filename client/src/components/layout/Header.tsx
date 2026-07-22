@@ -1,6 +1,6 @@
-import { getAvatarGradient } from "../utils";
-import useStore from "../store";
-import type { User } from "../store";
+import { getAvatarGradient } from "../../utils";
+import useStore from "../../store";
+import type { User } from "../../store";
 
 interface HeaderProps {
   user?: User | null;

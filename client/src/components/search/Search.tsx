@@ -5,7 +5,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useLazyQuery } from "@apollo/client/react";
 import { gql } from "@apollo/client";
-import PostCard from "./PostCard";
+import PostCard from "../feed/PostCard";
 import type { Post } from "@/types";
 
 interface SearchPostsData {

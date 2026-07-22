@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useMutation } from "@apollo/client/react";
 import { gql } from "@apollo/client";
-import useStore from "../store";
-import { getAvatarGradient } from "../utils";
-import UploadImage from "./UploadImage";
+import useStore from "../../store";
+import { getAvatarGradient } from "../../utils";
+import UploadImage from "../shared/UploadImage";
 import type { Post } from "@/types";
 
 interface CreatePostData {

@@ -6,9 +6,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useSubscription, useApolloClient } from "@apollo/client/react";
 import { gql, type Reference } from "@apollo/client";
-import { getAvatarGradient } from "../utils";
-import useStore from "../store";
-import type { Message, Meeting } from "../types";
+import { getAvatarGradient } from "../../utils";
+import useStore from "../../store";
+import type { Message, Meeting } from "../../types";
 
 const GET_CONVERSATION = gql`
   query GetConversation($userId1: ID!, $userId2: ID!) {

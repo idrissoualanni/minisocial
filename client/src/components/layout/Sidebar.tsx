@@ -1,8 +1,8 @@
 import { useQuery } from "@apollo/client/react";
 import { gql } from "@apollo/client";
-import { getAvatarGradient } from "../utils";
-import useStore from "../store";
-import type { GraphUser } from "../types";
+import { getAvatarGradient } from "../../utils";
+import useStore from "../../store";
+import type { GraphUser } from "../../types";
 import type React from "react";
 
 const GET_USERS = gql`

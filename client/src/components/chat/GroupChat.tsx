@@ -5,8 +5,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useSubscription, useApolloClient } from "@apollo/client/react";
 import { gql } from "@apollo/client";
-import { getAvatarGradient, timeAgo } from "../utils";
-import useStore from "../store";
+import { getAvatarGradient, timeAgo } from "../../utils";
+import useStore from "../../store";
 import type { Group, User } from "@/types";
 
 type GroupTarget = { id: string; name: string; members?: { user: { id: string; name: string; isOnline: boolean }; isCreator: boolean }[] } | null;

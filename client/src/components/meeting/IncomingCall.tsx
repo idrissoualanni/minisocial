@@ -4,7 +4,7 @@
 
 import { useMutation } from "@apollo/client/react";
 import { gql } from "@apollo/client";
-import useStore from "../store";
+import useStore from "../../store";
 import type { User } from "@/types";
 
 interface JoinMeetingData {

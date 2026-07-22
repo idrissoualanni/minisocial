@@ -2,8 +2,8 @@
 // CommentItem.jsx — Commentaire avec réponses threadées
 // ============================================================
 
-import { getAvatarGradient, timeAgo } from "../utils";
-import useStore from "../store";
+import { getAvatarGradient, timeAgo } from "../../utils";
+import useStore from "../../store";
 import type { Comment, Author, User } from "@/types";
 
 interface CommentItemProps {

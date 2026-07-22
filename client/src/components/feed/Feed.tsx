@@ -7,8 +7,8 @@ import { gql } from "@apollo/client";
 import { useEffect } from "react";
 import Composer from "./Composer";
 import PostCard from "./PostCard";
-import { useNotify } from "../hooks/useNotifications";
-import type { Post } from "../types";
+import { useNotify } from "../../hooks/useNotifications";
+import type { Post } from "../../types";
 
 const POST_FIELDS = `
   id title content imageUrl createdAt

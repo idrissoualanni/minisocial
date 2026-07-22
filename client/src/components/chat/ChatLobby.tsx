@@ -5,10 +5,10 @@
 import { useState } from "react";
 import { useQuery, useMutation, useSubscription, useApolloClient } from "@apollo/client/react";
 import { gql, type Reference } from "@apollo/client";
-import { getAvatarGradient, timeAgo } from "../utils";
+import { getAvatarGradient, timeAgo } from "../../utils";
 import CreateGroup from "./CreateGroup";
-import useStore from "../store";
-import type { ConversationPreview, PendingRequest, ChatPermission, Group, Message } from "../types";
+import useStore from "../../store";
+import type { ConversationPreview, PendingRequest, ChatPermission, Group, Message } from "../../types";
 
 // ── Subscription: nouveaux messages pour unreadCount temps réel ──
 const MESSAGE_SENT_GLOBAL_SUB = gql`
@@ -152,7 +152,7 @@ export default function ChatLobby() {
       if (!result) return;
       showToast(`${result.acceptChat.sender.name} a accepté !`);
       refetchPreviews(); refetchPending();
-      openChat(result.acceptChat.sender as import("../store").User);
+      openChat(result.acceptChat.sender as import("../../store").User);
     },
     onError: (err) => showToast(err.message, "error"),
   });

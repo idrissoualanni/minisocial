@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useMutation, useQuery, useSubscription, useApolloClient } from "@apollo/client/react";
 import { gql } from "@apollo/client";
-import useStore from "../store";
+import useStore from "../../store";
 import MeetingControls from "./MeetingControls";
 import type { User } from "@/types";
 

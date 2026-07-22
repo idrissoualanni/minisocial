@@ -5,8 +5,8 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@apollo/client/react";
 import { gql } from "@apollo/client";
-import { getAvatarGradient } from "../utils";
-import useStore from "../store";
+import { getAvatarGradient } from "../../utils";
+import useStore from "../../store";
 import type { Group } from "@/types";
 
 interface GroupUser {

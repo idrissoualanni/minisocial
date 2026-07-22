@@ -3,7 +3,7 @@
 // Niveaux : info | success | warning | error
 // ============================================================
 
-import useStore from "../store";
+import useStore from "../../store";
 import type { CSSProperties, ReactNode } from "react";
 
 type ToastType = "success" | "error" | "warning" | "info";
