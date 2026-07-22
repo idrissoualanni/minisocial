@@ -5,22 +5,28 @@
 import { useRef, useState } from "react";
 import ImageCropModal from "./ImageCropModal";
 
-export default function UploadImage({ imagePreview, onImageSelect, onImageRemove }) {
-  const inputRef = useRef(null);
-  const [rawImage, setRawImage] = useState(null); // image brute avant crop
+interface UploadImageProps {
+  imagePreview: string | null;
+  onImageSelect: (dataUrl: string) => void;
+  onImageRemove: () => void;
+}
 
-  const handleChange = (e) => {
+export default function UploadImage({ imagePreview, onImageSelect, onImageRemove }: UploadImageProps) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [rawImage, setRawImage] = useState<string | null>(null); // image brute avant crop
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) return;
     const reader = new FileReader();
-    reader.onload = () => setRawImage(reader.result);
+    reader.onload = () => setRawImage(typeof reader.result === "string" ? reader.result : null);
     reader.readAsDataURL(file);
     // reset input pour pouvoir re-sélectionner le même fichier
     e.target.value = "";
   };
 
-  const handleCropConfirm = (croppedImage) => {
+  const handleCropConfirm = (croppedImage: string) => {
     setRawImage(null);
     onImageSelect(croppedImage);
   };

@@ -4,15 +4,18 @@
 // ============================================================
 
 import useStore from "../store";
+import type { CSSProperties, ReactNode } from "react";
 
-const STYLES = {
+type ToastType = "success" | "error" | "warning" | "info";
+
+const STYLES: Record<ToastType, CSSProperties> = {
   success: { background: "var(--success-soft)", borderColor: "var(--success)", color: "var(--success)" },
   error:   { background: "var(--error-soft)", borderColor: "var(--error)", color: "var(--error)" },
   warning: { background: "var(--warning-soft)", borderColor: "var(--warning)", color: "var(--warning)" },
   info:    { background: "var(--accent-soft)", borderColor: "var(--accent)", color: "var(--accent)" },
 };
 
-const ICONS = {
+const ICONS: Record<ToastType, ReactNode> = {
   success: (
     <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16" className="shrink-0">
       <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/>
@@ -48,14 +51,14 @@ export default function Toast() {
           key={t.id}
           className="pointer-events-auto flex items-center gap-2.5 py-3 px-4 rounded-xl border-l-4 text-sm font-semibold cursor-pointer transition-all duration-300 ease-in"
           style={{
-            ...STYLES[t.type],
+            ...STYLES[t.type as ToastType],
             boxShadow: "var(--shadow-md)",
             animation: "toastSlideIn 0.3s ease forwards",
             opacity: 0,
           }}
           onClick={() => removeToast(t.id)}
         >
-          {ICONS[t.type] || ICONS.info}
+          {ICONS[t.type as ToastType] || ICONS.info}
           <span className="flex-1 leading-snug">{t.msg}</span>
           <button
             className="shrink-0 opacity-40 hover:opacity-100 transition-opacity bg-transparent border-none cursor-pointer text-inherit p-0 leading-none"

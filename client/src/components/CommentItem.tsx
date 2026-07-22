@@ -4,8 +4,16 @@
 
 import { getAvatarGradient, timeAgo } from "../utils";
 import useStore from "../store";
+import type { Comment, Author, User } from "@/types";
 
-export default function CommentItem({ comment, onReply, replies = [], depth = 0 }) {
+interface CommentItemProps {
+  comment: Comment;
+  onReply?: (comment: Comment) => void;
+  replies?: Comment[];
+  depth?: number;
+}
+
+export default function CommentItem({ comment, onReply, replies = [], depth = 0 }: CommentItemProps) {
   const openProfile = useStore((s) => s.openProfile);
 
   return (
@@ -13,19 +21,19 @@ export default function CommentItem({ comment, onReply, replies = [], depth = 0 
       <div
         className="w-8 h-8 rounded-full grid place-items-center font-bold text-[0.7rem] text-white shrink-0 cursor-pointer transition-opacity duration-150 hover:opacity-75"
         style={{ background: getAvatarGradient(comment.author.id) }}
-        onClick={() => openProfile?.(comment.author)}
+        onClick={() => openProfile?.(comment.author as User)}
       >
         {comment.author.name.charAt(0)}
       </div>
       <div style={{ background: "var(--surface-sunken)", borderRadius: "var(--radius-sm)" }} className="flex-1 py-2.5 px-3.5">
         <div>
-          <span style={{ color: "var(--text)" }} className="font-bold text-[0.78rem] cursor-pointer transition-opacity duration-150 hover:underline hover:opacity-100" onClick={() => openProfile?.(comment.author)}>
+          <span style={{ color: "var(--text)" }} className="font-bold text-[0.78rem] cursor-pointer transition-opacity duration-150 hover:underline hover:opacity-100" onClick={() => openProfile?.(comment.author as User)}>
             {comment.author.name}
           </span>
           <span style={{ color: "var(--text-tertiary)" }} className="text-[0.65rem] ml-1.5 font-['DM_Mono',monospace]">{timeAgo(comment.createdAt)}</span>
         </div>
         <div style={{ color: "var(--text-secondary)" }} className="text-[0.82rem] mt-0.5 break-words whitespace-pre-wrap">{comment.text}</div>
-        <button className="bg-transparent border-none text-[0.7rem] font-bold cursor-pointer font-['Inter',inherit] py-0.5 px-0 transition-colors duration-150" style={{ color: "var(--text-tertiary)" }} onMouseEnter={(e) => e.target.style.color = "var(--accent)"} onMouseLeave={(e) => e.target.style.color = "var(--text-tertiary)"} onClick={() => onReply?.(comment)}>
+        <button className="bg-transparent border-none text-[0.7rem] font-bold cursor-pointer font-['Inter',inherit] py-0.5 px-0 transition-colors duration-150" style={{ color: "var(--text-tertiary)" }} onMouseEnter={(e) => e.currentTarget.style.color = "var(--accent)"} onMouseLeave={(e) => e.currentTarget.style.color = "var(--text-tertiary)"} onClick={() => onReply?.(comment)}>
           Répondre
         </button>
 

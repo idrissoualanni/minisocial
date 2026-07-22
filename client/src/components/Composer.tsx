@@ -4,6 +4,15 @@ import { gql } from "@apollo/client";
 import useStore from "../store";
 import { getAvatarGradient } from "../utils";
 import UploadImage from "./UploadImage";
+import type { Post } from "@/types";
+
+interface CreatePostData {
+  createPost: Post;
+}
+
+interface PostsData {
+  posts: Post[];
+}
 
 const POST_FIELDS = `
   id title content imageUrl createdAt
@@ -34,9 +43,9 @@ export default function Composer() {
   const showToast = useStore((s) => s.showToast);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
-  const [imagePreview, setImagePreview] = useState(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
-  const [createPost] = useMutation(CREATE_POST);
+  const [createPost] = useMutation<CreatePostData>(CREATE_POST);
 
   const handleSubmit = async () => {
     if (!title.trim() || !content.trim()) return;
@@ -48,11 +57,12 @@ export default function Composer() {
     try {
       await createPost({
         variables: { title: title.trim(), content: content.trim(), imageUrl: imagePreview || null },
-        update: (cache, { data: { createPost: newPost } }) => {
-          const existing = cache.readQuery({ query: GET_POSTS });
+        update: (cache, { data }) => {
+          if (!data?.createPost) return;
+          const existing = cache.readQuery<PostsData>({ query: GET_POSTS });
           cache.writeQuery({
             query: GET_POSTS,
-            data: { posts: [newPost, ...existing.posts] },
+            data: { posts: [data.createPost, ...(existing?.posts ?? [])] },
           });
         },
       });
@@ -60,8 +70,8 @@ export default function Composer() {
       setTitle("");
       setContent("");
       setImagePreview(null);
-    } catch (err) {
-      showToast(err.message, "error");
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : "Erreur inconnue", "error");
     }
     setPublishing(false);
   };
@@ -111,8 +121,8 @@ export default function Composer() {
           className="py-2 px-6 border-none rounded-full text-[0.82rem] font-bold cursor-pointer transition-all duration-200 font-['Inter',inherit] hover:-translate-y-px active:translate-y-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
           onClick={handleSubmit}
           disabled={publishing || !currentUser}
-          onMouseEnter={(e) => e.target.style.background = "var(--accent-hover)"}
-          onMouseLeave={(e) => e.target.style.background = "var(--accent)"}
+          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--accent-hover)")}
+          onMouseLeave={(e) => (e.currentTarget.style.background = "var(--accent)")}
         >
           {publishing ? "Publication..." : "Publier"}
         </button>

@@ -7,6 +7,26 @@ import { useQuery, useMutation } from "@apollo/client/react";
 import { gql } from "@apollo/client";
 import { getAvatarGradient } from "../utils";
 import useStore from "../store";
+import type { Group } from "@/types";
+
+interface GroupUser {
+  id: string;
+  name: string;
+  isOnline: boolean;
+}
+
+interface GetUsersData {
+  users: GroupUser[];
+}
+
+interface CreateGroupData {
+  createGroup: Group;
+}
+
+interface CreateGroupProps {
+  onCreated: (group: Group) => void;
+  onCancel: () => void;
+}
 
 const GET_USERS = gql`
   query GetUsers {
@@ -24,22 +44,22 @@ const CREATE_GROUP = gql`
   }
 `;
 
-export default function CreateGroup({ onCreated, onCancel }) {
+export default function CreateGroup({ onCreated, onCancel }: CreateGroupProps) {
   const currentUser = useStore((s) => s.currentUser);
   const showToast = useStore((s) => s.showToast);
   const [name, setName] = useState("");
-  const [selectedIds, setSelectedIds] = useState(new Set());
-  const { data } = useQuery(GET_USERS);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const { data } = useQuery<GetUsersData>(GET_USERS);
 
-  const [createGroup] = useMutation(CREATE_GROUP, {
+  const [createGroup] = useMutation<CreateGroupData>(CREATE_GROUP, {
     onCompleted: (data) => {
       showToast("Groupe créé !");
-      onCreated(data.createGroup);
+      if (data?.createGroup) onCreated(data.createGroup);
     },
     onError: (err) => showToast(err.message, "error"),
   });
 
-  const toggleUser = (id) => {
+  const toggleUser = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -59,7 +79,7 @@ export default function CreateGroup({ onCreated, onCancel }) {
     });
   };
 
-  const users = (data?.users || []).filter((u) => u.id !== currentUser.id);
+  const users = (data?.users || []).filter((u) => u.id !== currentUser?.id);
 
   return (
     <div className="mx-auto" style={{ maxWidth: "480px", padding: "var(--sp-6) var(--sp-5)" }}>

@@ -5,6 +5,26 @@
 import { useMutation } from "@apollo/client/react";
 import { gql } from "@apollo/client";
 import useStore from "../store";
+import type { User } from "@/types";
+
+interface JoinMeetingData {
+  joinMeeting: {
+    id: string;
+    title: string;
+    isActive: boolean;
+  } | null;
+}
+
+interface Invitation {
+  meetingId: string;
+  fromUser?: { name?: string };
+  meetingTitle?: string;
+}
+
+interface IncomingCallProps {
+  invitation: Invitation | null;
+  onDismiss: () => void;
+}
 
 const JOIN_MEETING = gql`
   mutation JoinMeeting($meetingId: ID!) {
@@ -14,14 +34,15 @@ const JOIN_MEETING = gql`
   }
 `;
 
-export default function IncomingCall({ invitation, onDismiss }) {
+export default function IncomingCall({ invitation, onDismiss }: IncomingCallProps) {
   const currentUser = useStore((s) => s.currentUser);
   const openMeeting = useStore((s) => s.openMeeting);
   const showToast = useStore((s) => s.showToast);
 
-  const [joinMeeting] = useMutation(JOIN_MEETING);
+  const [joinMeeting] = useMutation<JoinMeetingData>(JOIN_MEETING);
 
   const handleAccept = async () => {
+    if (!invitation) return;
     try {
       const { data } = await joinMeeting({
         variables: { meetingId: invitation.meetingId },
@@ -30,8 +51,8 @@ export default function IncomingCall({ invitation, onDismiss }) {
         openMeeting(data.joinMeeting);
         showToast("Appel rejoint !");
       }
-    } catch (err) {
-      showToast(err.message, "error");
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : "Erreur inconnue", "error");
     }
     onDismiss();
   };

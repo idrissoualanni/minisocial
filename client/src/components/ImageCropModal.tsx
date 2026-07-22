@@ -8,8 +8,45 @@ import { useState, useRef, useCallback, useEffect } from "react";
 const HANDLE_SIZE = 14;
 const MIN_CROP = 30;
 
+interface ImageCropModalProps {
+  imageSrc: string;
+  onCrop: (dataUrl: string) => void;
+  onCancel: () => void;
+}
+
+interface Selection {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+interface Pan {
+  x: number;
+  y: number;
+}
+
+interface CanvasSize {
+  w: number;
+  h: number;
+}
+
+interface DragState {
+  active: boolean;
+  handle: string | null;
+  startX: number;
+  startY: number;
+  origSel: Selection | null;
+}
+
+interface CornerHandle {
+  id: string;
+  x: number;
+  y: number;
+}
+
 // Convertit data URL → image dimensions
-function loadImage(src) {
+function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
@@ -19,7 +56,7 @@ function loadImage(src) {
 }
 
 // Dessine l'image + overlay + sélection sur un canvas
-function renderFrame(ctx, img, zoom, pan, sel, canvasW, canvasH) {
+function renderFrame(ctx: CanvasRenderingContext2D, img: HTMLImageElement, zoom: number, pan: Pan, sel: Selection, canvasW: number, canvasH: number) {
   ctx.clearRect(0, 0, canvasW, canvasH);
 
   // Fond sombre
@@ -89,7 +126,7 @@ function renderFrame(ctx, img, zoom, pan, sel, canvasW, canvasH) {
   ctx.shadowBlur = 0;
 }
 
-function getCornerHandles(sel) {
+function getCornerHandles(sel: Selection): CornerHandle[] {
   return [
     { id: "tl", x: sel.x, y: sel.y },
     { id: "tr", x: sel.x + sel.w, y: sel.y },
@@ -98,7 +135,7 @@ function getCornerHandles(sel) {
   ];
 }
 
-function hitTest(mx, my, sel) {
+function hitTest(mx: number, my: number, sel: Selection): string | null {
   const corners = getCornerHandles(sel);
   for (const c of corners) {
     const dx = mx - c.x;
@@ -114,19 +151,19 @@ function hitTest(mx, my, sel) {
   return null;
 }
 
-export default function ImageCropModal({ imageSrc, onCrop, onCancel }) {
-  const canvasRef = useRef(null);
-  const containerRef = useRef(null);
-  const imgRef = useRef(null);
-  const rafRef = useRef(null);
+export default function ImageCropModal({ imageSrc, onCrop, onCancel }: ImageCropModalProps) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const rafRef = useRef<number | null>(null);
 
   const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [sel, setSel] = useState({ x: 50, y: 50, w: 200, h: 200 });
-  const [canvasSize, setCanvasSize] = useState({ w: 560, h: 340 });
+  const [pan, setPan] = useState<Pan>({ x: 0, y: 0 });
+  const [sel, setSel] = useState<Selection>({ x: 50, y: 50, w: 200, h: 200 });
+  const [canvasSize, setCanvasSize] = useState<CanvasSize>({ w: 560, h: 340 });
 
   // Drag state
-  const dragRef = useRef({ active: false, handle: null, startX: 0, startY: 0, origSel: null });
+  const dragRef = useRef<DragState>({ active: false, handle: null, startX: 0, startY: 0, origSel: null });
 
   // Charger l'image et calculer canvas
   useEffect(() => {
@@ -161,16 +198,17 @@ export default function ImageCropModal({ imageSrc, onCrop, onCancel }) {
     const img = imgRef.current;
     if (!canvas || !img) return;
     const ctx = canvas.getContext("2d");
+    if (!ctx) return;
     renderFrame(ctx, img, zoom, pan, sel, canvasSize.w, canvasSize.h);
   }, [zoom, pan, sel, canvasSize]);
 
   // Mouse handlers
-  const getPos = useCallback((e) => {
-    const rect = canvasRef.current.getBoundingClientRect();
+  const getPos = useCallback((e: MouseEvent | React.MouseEvent) => {
+    const rect = canvasRef.current!.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }, []);
 
-  const handleMouseDown = useCallback((e) => {
+  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const pos = getPos(e);
     const hit = hitTest(pos.x, pos.y, sel);
     if (!hit) return;
@@ -184,23 +222,25 @@ export default function ImageCropModal({ imageSrc, onCrop, onCancel }) {
     };
   }, [sel, getPos]);
 
-  const handleMouseMove = useCallback((e) => {
+  const handleMouseMove = useCallback((e: MouseEvent) => {
     const drag = dragRef.current;
     if (!drag.active) {
       // Cursor feedback
       const pos = getPos(e);
       const hit = hitTest(pos.x, pos.y, sel);
-      canvasRef.current.style.cursor =
-        hit === "tl" || hit === "br" ? "nwse-resize" :
-        hit === "tr" || hit === "bl" ? "nesw-resize" :
-        hit === "move" ? "grab" : "default";
+      if (canvasRef.current) {
+        canvasRef.current.style.cursor =
+          hit === "tl" || hit === "br" ? "nwse-resize" :
+          hit === "tr" || hit === "bl" ? "nesw-resize" :
+          hit === "move" ? "grab" : "default";
+      }
       return;
     }
 
     const pos = getPos(e);
     const dx = pos.x - drag.startX;
     const dy = pos.y - drag.startY;
-    const o = drag.origSel;
+    const o = drag.origSel!;
     const { w: cw, h: ch } = canvasSize;
 
     if (drag.handle === "move") {
@@ -213,20 +253,20 @@ export default function ImageCropModal({ imageSrc, onCrop, onCancel }) {
       return;
     }
 
-    let newSel = { ...o };
+    let newSel: Selection = { ...o };
 
-    if (drag.handle.includes("l")) {
+    if (drag.handle && drag.handle.includes("l")) {
       newSel.x = Math.max(0, o.x + dx);
       newSel.w = o.w - (newSel.x - o.x);
     }
-    if (drag.handle.includes("r")) {
+    if (drag.handle && drag.handle.includes("r")) {
       newSel.w = Math.max(MIN_CROP, Math.min(cw - o.x, o.w + dx));
     }
-    if (drag.handle.includes("t")) {
+    if (drag.handle && drag.handle.includes("t")) {
       newSel.y = Math.max(0, o.y + dy);
       newSel.h = o.h - (newSel.y - o.y);
     }
-    if (drag.handle.includes("b")) {
+    if (drag.handle && drag.handle.includes("b")) {
       newSel.h = Math.max(MIN_CROP, Math.min(ch - o.y, o.h + dy));
     }
 
@@ -292,7 +332,7 @@ export default function ImageCropModal({ imageSrc, onCrop, onCancel }) {
     canvas.width = outW;
     canvas.height = outH;
     const ctx = canvas.getContext("2d");
-    ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, outW, outH);
+    ctx!.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, outW, outH);
     onCrop(canvas.toDataURL("image/jpeg", 0.92));
   };
 

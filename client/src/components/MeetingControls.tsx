@@ -1,6 +1,14 @@
 // client/src/components/MeetingControls.jsx
 
-export default function MeetingControls({ onToggleMic, onToggleCam, onHangup, isMuted, isCamOff }) {
+interface MeetingControlsProps {
+  onToggleMic: () => void;
+  onToggleCam: () => void;
+  onHangup: () => void;
+  isMuted: boolean;
+  isCamOff: boolean;
+}
+
+export default function MeetingControls({ onToggleMic, onToggleCam, onHangup, isMuted, isCamOff }: MeetingControlsProps) {
   return (
     <div className="flex items-center justify-center gap-4 p-4 bg-gray-900 rounded-b-xl">
       <button
