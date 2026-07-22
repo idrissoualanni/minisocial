@@ -170,8 +170,13 @@ const resolvers = {
       return stmts.conversation.all(userId1, userId2, userId2, userId1).map(decryptMessage);
     },
 
-    chatPermission: (_, { userId1, userId2 }) =>
-      stmts.permissionBetween.get(userId1, userId2, userId2, userId1) || null,
+    chatPermission: (_, { userId1, userId2 }, { user }) => {
+      if (!user) throw new Error("Non authentifié");
+      if (user.id !== Number(userId1) && user.id !== Number(userId2)) {
+        throw new Error("Accès refusé — tu ne peux voir que tes propres permissions.");
+      }
+      return stmts.permissionBetween.get(userId1, userId2, userId2, userId1) || null;
+    },
 
     pendingRequests: (_, { userId }, { user }) => {
       if (!user) throw new Error("Non authentifié");
@@ -236,9 +241,19 @@ const resolvers = {
     },
 
     // --- Groupes ---
-    myGroups: (_, { userId }) => stmts.myGroups.all(userId),
-    groupMessages: (_, { groupId, limit }) =>
-      stmts.groupMessages.all(groupId, limit || 50).reverse(),
+    myGroups: (_, { userId }, { user }) => {
+      if (!user) throw new Error("Non authentifié");
+      if (user.id !== Number(userId)) {
+        throw new Error("Accès refusé — tu ne peux voir que tes propres groupes.");
+      }
+      return stmts.myGroups.all(userId);
+    },
+    groupMessages: (_, { groupId, limit }, { user }) => {
+      if (!user) throw new Error("Non authentifié");
+      const member = stmts.isGroupMember.get(groupId, user.id);
+      if (!member) throw new Error("Accès refusé — tu n'es pas membre de ce groupe.");
+      return stmts.groupMessages.all(groupId, limit || 50).reverse();
+    },
 
     // --- Meetings ---
     meetings: () => stmts.allMeetings.all(),
@@ -250,15 +265,19 @@ const resolvers = {
   // ==========================================================
   Mutation: {
     // --- Users ---
-    updateUser: (_, { id, name, email, bio }) => {
-      const user = stmts.userById.get(id);
-      if (!user) throw new Error("Utilisateur introuvable.");
-      if (email && email !== user.email) {
+    updateUser: (_, { id, name, email, bio }, { user }) => {
+      if (!user) throw new Error("Non authentifié");
+      if (user.id !== Number(id)) {
+        throw new Error("Accès refusé — tu ne peux modifier que ton propre profil.");
+      }
+      const existing = stmts.userById.get(id);
+      if (!existing) throw new Error("Utilisateur introuvable.");
+      if (email && email !== existing.email) {
         const dup = db.prepare("SELECT id FROM app_users WHERE email = ? AND id != ?").get(email, id);
         if (dup) throw new Error("Cet email est déjà utilisé.");
       }
       db.prepare("UPDATE app_users SET name = ?, email = ?, bio = ? WHERE id = ?").run(
-        name || user.name, email || user.email, bio ?? user.bio ?? "", id
+        name || existing.name, email || existing.email, bio ?? existing.bio ?? "", id
       );
       return stmts.userById.get(id);
     },
@@ -409,6 +428,9 @@ const resolvers = {
       const perm = stmts.permissionById.get(permissionId);
       if (!perm) throw new Error("Demande introuvable.");
       if (perm.status !== "pending") throw new Error("Cette demande n'est plus en attente.");
+      if (perm.receiver_id !== user.id) {
+        throw new Error("Accès refusé — tu ne peux accepter que les demandes qui te sont adressées.");
+      }
       stmts.updatePermissionStatus.run("accepted", permissionId);
       const updated = stmts.permissionById.get(permissionId);
       pubsub.publish(EVENTS.CHAT_PERMISSION_UPDATED, { chatPermissionUpdated: updated });
@@ -419,6 +441,9 @@ const resolvers = {
       if (!user) throw new Error("Non authentifié");
       const perm = stmts.permissionById.get(permissionId);
       if (!perm) throw new Error("Demande introuvable.");
+      if (perm.receiver_id !== user.id) {
+        throw new Error("Accès refusé — tu ne peux rejeter que les demandes qui te sont adressées.");
+      }
       stmts.updatePermissionStatus.run("rejected", permissionId);
       const updated = stmts.permissionById.get(permissionId);
       pubsub.publish(EVENTS.CHAT_PERMISSION_UPDATED, { chatPermissionUpdated: updated });
@@ -445,16 +470,25 @@ const resolvers = {
       return stmts.groupById.get(groupId);
     },
 
-    addGroupMember: (_, { groupId, userId }) => {
+    addGroupMember: (_, { groupId, userId }, { user }) => {
+      if (!user) throw new Error("Non authentifié");
       const group = stmts.groupById.get(groupId);
       if (!group) throw new Error("Groupe introuvable.");
+      const requester = stmts.isGroupMember.get(groupId, user.id);
+      if (!requester) throw new Error("Accès refusé — tu n'es pas membre de ce groupe.");
       const u = stmts.userById.get(userId);
       if (!u) throw new Error("Utilisateur introuvable.");
       stmts.insertGroupMember.run(groupId, userId, 0);
       return { user: u, isCreator: false, joinedAt: new Date().toISOString() };
     },
 
-    removeGroupMember: (_, { groupId, userId }) => {
+    removeGroupMember: (_, { groupId, userId }, { user }) => {
+      if (!user) throw new Error("Non authentifié");
+      const group = stmts.groupById.get(groupId);
+      if (!group) throw new Error("Groupe introuvable.");
+      if (group.creator_id !== user.id && user.id !== Number(userId)) {
+        throw new Error("Accès refusé — seul le créateur peut virer un membre, ou tu peux te retirer toi-même.");
+      }
       stmts.removeGroupMember.run(groupId, userId);
       return true;
     },
