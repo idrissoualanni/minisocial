@@ -540,21 +540,21 @@ const resolvers = {
   // ==========================================================
   Subscription: {
     postCreated: {
-      subscribe: () => pubsub.asyncIterator([EVENTS.POST_CREATED]),
+      subscribe: () => pubsub.subscribe([EVENTS.POST_CREATED]),
     },
     commentAdded: {
       subscribe: (_, { postId }) => {
         if (postId) {
           return {
             [Symbol.asyncIterator]: async function* () {
-              const iter = pubsub.asyncIterator([EVENTS.COMMENT_ADDED]);
+              const iter = pubsub.subscribe([EVENTS.COMMENT_ADDED]);
               for await (const event of iter) {
                 if (String(event.commentAdded.post_id) === String(postId)) yield event;
               }
             },
           };
         }
-        return pubsub.asyncIterator([EVENTS.COMMENT_ADDED]);
+        return pubsub.subscribe([EVENTS.COMMENT_ADDED]);
       },
       resolve: (payload) => payload.commentAdded,
     },
@@ -563,7 +563,7 @@ const resolvers = {
         const ids = new Set([String(userId1), String(userId2)]);
         return {
           [Symbol.asyncIterator]: async function* () {
-            const iter = pubsub.asyncIterator([EVENTS.MESSAGE_SENT]);
+            const iter = pubsub.subscribe([EVENTS.MESSAGE_SENT]);
             for await (const event of iter) {
               const msg = event.messageSent;
               if (ids.has(String(msg.sender_id)) && ids.has(String(msg.receiver_id))) yield event;
@@ -577,7 +577,7 @@ const resolvers = {
       subscribe: (_, { userId }) => {
         return {
           [Symbol.asyncIterator]: async function* () {
-            const iter = pubsub.asyncIterator([EVENTS.MESSAGE_SENT_TO_USER]);
+            const iter = pubsub.subscribe([EVENTS.MESSAGE_SENT_TO_USER]);
             for await (const event of iter) {
               const msg = event.messageSentToUser;
               if (String(msg.receiver_id) === String(userId)) yield event;
@@ -591,7 +591,7 @@ const resolvers = {
       subscribe: (_, { userId }) => {
         return {
           [Symbol.asyncIterator]: async function* () {
-            const iter = pubsub.asyncIterator([EVENTS.CHAT_PERMISSION_UPDATED]);
+            const iter = pubsub.subscribe([EVENTS.CHAT_PERMISSION_UPDATED]);
             for await (const event of iter) {
               const perm = event.chatPermissionUpdated;
               if (String(perm.sender_id) === String(userId) || String(perm.receiver_id) === String(userId)) yield event;
@@ -605,7 +605,7 @@ const resolvers = {
       subscribe: (_, { userId }) => {
         return {
           [Symbol.asyncIterator]: async function* () {
-            const iter = pubsub.asyncIterator([EVENTS.MESSAGE_READ]);
+            const iter = pubsub.subscribe([EVENTS.MESSAGE_READ]);
             for await (const event of iter) {
               const { senderId, receiverId } = event.messageRead;
               if (String(senderId) === String(userId) || String(receiverId) === String(userId)) yield event;
@@ -616,7 +616,7 @@ const resolvers = {
       resolve: (payload) => payload.messageRead,
     },
     likeToggled: {
-      subscribe: () => pubsub.asyncIterator([EVENTS.LIKE_TOGGLED]),
+      subscribe: () => pubsub.subscribe([EVENTS.LIKE_TOGGLED]),
       resolve: (payload) => payload.likeToggled,
     },
     userTyping: {
@@ -624,7 +624,7 @@ const resolvers = {
         const ids = new Set([String(userId1), String(userId2)]);
         return {
           [Symbol.asyncIterator]: async function* () {
-            const iter = pubsub.asyncIterator([EVENTS.USER_TYPING]);
+            const iter = pubsub.subscribe([EVENTS.USER_TYPING]);
             for await (const event of iter) {
               if (ids.has(String(event.userTyping.userId))) yield event;
             }
@@ -637,7 +637,7 @@ const resolvers = {
       subscribe: (_, { groupId }) => {
         return {
           [Symbol.asyncIterator]: async function* () {
-            const iter = pubsub.asyncIterator([EVENTS.GROUP_MESSAGE_SENT]);
+            const iter = pubsub.subscribe([EVENTS.GROUP_MESSAGE_SENT]);
             for await (const event of iter) {
               if (String(event.groupMessageSent.group_id) === String(groupId)) yield event;
             }
@@ -651,7 +651,7 @@ const resolvers = {
       subscribe: (_, { meetingId }) => {
         return {
           [Symbol.asyncIterator]: async function* () {
-            const iter = pubsub.asyncIterator([EVENTS.MEETING_SIGNAL]);
+            const iter = pubsub.subscribe([EVENTS.MEETING_SIGNAL]);
             try {
               for await (const event of iter) {
                 if (String(event.meetingSignal.meetingId) === String(meetingId)) yield event;
@@ -669,7 +669,7 @@ const resolvers = {
       subscribe: (_, { meetingId }) => {
         return {
           [Symbol.asyncIterator]: async function* () {
-            const iter = pubsub.asyncIterator([EVENTS.MEETING_UPDATED]);
+            const iter = pubsub.subscribe([EVENTS.MEETING_UPDATED]);
             for await (const event of iter) {
               if (String(event.meetingUpdated.id) === String(meetingId)) yield event;
             }
@@ -683,7 +683,7 @@ const resolvers = {
       subscribe: (_, { userId }) => {
         return {
           [Symbol.asyncIterator]: async function* () {
-            const iter = pubsub.asyncIterator([EVENTS.MEETING_INVITED]);
+            const iter = pubsub.subscribe([EVENTS.MEETING_INVITED]);
             for await (const event of iter) {
               if (String(event.meetingInvited.toUserId) === String(userId)) yield event;
             }

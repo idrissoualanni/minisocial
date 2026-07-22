@@ -32,6 +32,10 @@ export const auth = betterAuth({
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24,      // refresh every 24h
   },
+  trustedOrigins: [
+    "http://localhost:5173",
+    "http://localhost:4000",
+  ],
   advanced: {
     cookiePrefix: "minisocial",
   },
