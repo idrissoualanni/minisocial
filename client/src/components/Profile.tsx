@@ -9,6 +9,28 @@ import PostCard from "./PostCard";
 import { getAvatarGradient } from "../utils";
 import { GET_POSTS } from "./Feed";
 import useStore from "../store";
+import type { Post, User } from "@/types";
+
+interface UserProfileData {
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    bio: string | null;
+    isOnline: boolean;
+    postCount: number;
+    posts: Post[];
+  } | null;
+}
+
+interface UpdateUserData {
+  updateUser: {
+    id: string;
+    name: string;
+    email: string;
+    bio: string | null;
+  };
+}
 
 const GET_USER_PROFILE = gql`
   query GetUserProfile($id: ID!) {
@@ -38,14 +60,14 @@ export default function Profile() {
   const currentUser = useStore((s) => s.currentUser);
   const showToast = useStore((s) => s.showToast);
   const setView = useStore((s) => s.setView);
-  const { data, loading, refetch } = useQuery(GET_USER_PROFILE, { variables: { id: profileUser.id } });
   const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(profileUser.name);
-  const [email, setEmail] = useState(profileUser.email);
+  const [name, setName] = useState(profileUser?.name ?? "");
+  const [email, setEmail] = useState(profileUser?.email ?? "");
   const [bio, setBio] = useState("");
+  const { data, loading, refetch } = useQuery<UserProfileData>(GET_USER_PROFILE, { variables: { id: profileUser?.id ?? "" }, skip: !profileUser });
 
-  const [updateUser] = useMutation(UPDATE_USER, {
-    onCompleted: (data) => {
+  const [updateUser] = useMutation<UpdateUserData>(UPDATE_USER, {
+    onCompleted: () => {
       setEditing(false);
       showToast("Profil modifié !");
       refetch();
@@ -54,7 +76,9 @@ export default function Profile() {
   });
 
   const profile = data?.user;
-  const isMe = currentUser && String(currentUser.id) === String(profileUser.id);
+  const isMe = currentUser && String(currentUser.id) === String(profileUser?.id);
+
+  if (!profileUser) return null;
 
   // Sync bio from fetched data
   if (profile && bio === "" && profile.bio) setBio(profile.bio);
@@ -66,8 +90,8 @@ export default function Profile() {
 
   const inputClasses = "w-full py-2.5 px-3 border rounded-lg text-sm bg-transparent outline-none transition-all duration-200 placeholder:opacity-50";
 
-  const handleFocus = (e) => { e.target.style.borderColor = "var(--accent)"; e.target.style.boxShadow = "0 0 0 3px var(--accent-soft)"; };
-  const handleBlur = (e) => { e.target.style.borderColor = "var(--border)"; e.target.style.boxShadow = "none"; };
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => { e.target.style.borderColor = "var(--accent)"; e.target.style.boxShadow = "0 0 0 3px var(--accent-soft)"; };
+  const handleBlur = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => { e.target.style.borderColor = "var(--border)"; e.target.style.boxShadow = "none"; };
 
   return (
     <div className="max-w-2xl mx-auto py-6 px-4 pb-16">
