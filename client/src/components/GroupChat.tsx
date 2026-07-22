@@ -7,6 +7,29 @@ import { useQuery, useMutation, useSubscription, useApolloClient } from "@apollo
 import { gql } from "@apollo/client";
 import { getAvatarGradient, timeAgo } from "../utils";
 import useStore from "../store";
+import type { Group, User } from "@/types";
+
+type GroupTarget = { id: string; name: string; members?: { user: { id: string; name: string; isOnline: boolean }; isCreator: boolean }[] } | null;
+
+interface GroupMessage {
+  id: string;
+  text: string;
+  createdAt: string;
+  sender: { id: string; name: string };
+  group: { id: string; name: string };
+}
+
+interface GroupMessagesData {
+  groupMessages: GroupMessage[];
+}
+
+interface SendGroupMessageData {
+  sendGroupMessage: GroupMessage;
+}
+
+interface GroupMessageSentData {
+  groupMessageSent: GroupMessage;
+}
 
 const GET_GROUP_MESSAGES = gql`
   query GetGroupMessages($groupId: ID!, $limit: Int) {
@@ -38,7 +61,7 @@ const GROUP_MSG_SUB = gql`
   }
 `;
 
-function formatTime(isoStr) {
+function formatTime(isoStr: string): string {
   if (!isoStr) return "";
   const d = new Date(isoStr.replace(" ", "T") + "Z");
   if (isNaN(d.getTime())) return "";
@@ -46,24 +69,28 @@ function formatTime(isoStr) {
 }
 
 export default function GroupChat() {
-  const group = useStore((s) => s.groupTarget);
+  const rawGroup = useStore((s) => s.groupTarget) as GroupTarget;
   const currentUser = useStore((s) => s.currentUser);
   const closeChat = useStore((s) => s.closeChat);
   const showToast = useStore((s) => s.showToast);
   const openProfile = useStore((s) => s.openProfile);
   const [messageText, setMessageText] = useState("");
-  const messagesEndRef = useRef(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const { cache } = useApolloClient();
+
+  if (!rawGroup) return null;
+  if (!currentUser) return null;
+  const group = rawGroup;
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
-  const addToCache = useCallback((newMsg) => {
+  const addToCache = useCallback((newMsg: GroupMessage) => {
     if (!group?.id) return;
     try {
-      const variables = { groupId: group.id, limit: 50 };
-      const existing = cache.readQuery({ query: GET_GROUP_MESSAGES, variables });
+      const variables = { groupId: group!.id, limit: 50 };
+      const existing = cache.readQuery<GroupMessagesData>({ query: GET_GROUP_MESSAGES, variables });
       if (existing && !existing.groupMessages.some((m) => m.id === newMsg.id)) {
         cache.writeQuery({
           query: GET_GROUP_MESSAGES,
@@ -74,16 +101,16 @@ export default function GroupChat() {
     } catch {}
   }, [cache, group?.id]);
 
-  const { data, loading } = useQuery(GET_GROUP_MESSAGES, {
+  const { data, loading } = useQuery<GroupMessagesData>(GET_GROUP_MESSAGES, {
     variables: { groupId: group.id, limit: 50 },
     skip: !group?.id,
   });
 
-  const [sendGroupMessage] = useMutation(SEND_GROUP_MESSAGE, {
-    update: (cache, { data: { sendGroupMessage: newMsg } }) => addToCache(newMsg),
+  const [sendGroupMessage] = useMutation<SendGroupMessageData>(SEND_GROUP_MESSAGE, {
+    update: (cache, { data }) => { if (data) addToCache(data.sendGroupMessage); },
   });
 
-  useSubscription(GROUP_MSG_SUB, {
+  useSubscription<GroupMessageSentData>(GROUP_MSG_SUB, {
     variables: { groupId: group.id },
     skip: !group?.id,
     onData: ({ data: { data } }) => {
@@ -104,8 +131,8 @@ export default function GroupChat() {
         variables: { text: messageText.trim(), groupId: group.id },
       });
       setMessageText("");
-    } catch (err) {
-      showToast(err.message, "error");
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : "Erreur inconnue", "error");
     }
   };
 
@@ -151,7 +178,7 @@ export default function GroupChat() {
                       <div
                         className="text-[0.7rem] font-bold cursor-pointer transition-opacity duration-150 hover:opacity-75"
                         style={{ color: "var(--accent)", marginBottom: "2px" }}
-                        onClick={() => openProfile?.(msg.sender)}
+                        onClick={() => openProfile?.(msg.sender as User)}
                       >
                         {msg.sender.name}
                       </div>
