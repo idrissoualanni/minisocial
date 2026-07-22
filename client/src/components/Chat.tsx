@@ -5,9 +5,10 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useSubscription, useApolloClient } from "@apollo/client/react";
-import { gql } from "@apollo/client";
+import { gql, type Reference } from "@apollo/client";
 import { getAvatarGradient } from "../utils";
 import useStore from "../store";
+import type { Message, Meeting } from "../types";
 
 const GET_CONVERSATION = gql`
   query GetConversation($userId1: ID!, $userId2: ID!) {
@@ -83,7 +84,7 @@ const MESSAGE_FRAGMENT = gql`
   }
 `;
 
-function formatTime(isoStr) {
+function formatTime(isoStr: string | null | undefined): string {
   if (!isoStr) return "";
   const d = new Date(isoStr.replace(" ", "T") + "Z");
   if (isNaN(d.getTime())) return "";
@@ -97,11 +98,11 @@ export default function Chat() {
   const showToast = useStore((s) => s.showToast);
   const openProfile = useStore((s) => s.openProfile);
   const openMeeting = useStore((s) => s.openMeeting);
-  const [messageText, setMessageText] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
-  const messagesEndRef = useRef(null);
-  const typingTimeoutRef = useRef(null);
-  const tempIdCounter = useRef(0);
+  const [messageText, setMessageText] = useState<string>("");
+  const [isTyping, setIsTyping] = useState<boolean>(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tempIdCounter = useRef<number>(0);
   const { cache } = useApolloClient();
 
   const scrollToBottom = useCallback(() => {
@@ -113,14 +114,14 @@ export default function Chat() {
   const variables = { userId1, userId2 };
 
   // ── Helper: ajouter un message au cache via cache.modify ──
-  const addMsgToCache = useCallback((newMsg) => {
+  const addMsgToCache = useCallback((newMsg: Message) => {
     if (!userId1 || !userId2) return;
     try {
       cache.modify({
         fields: {
           conversation: (existingRefs = [], { readField }) => {
             // Éviter doublons (optimistic → réel)
-            if (existingRefs.some((ref) => String(readField("id", ref)) === String(newMsg.id))) {
+            if (existingRefs.some((ref: Reference) => String(readField("id", ref)) === String(newMsg.id))) {
               return existingRefs;
             }
             const msgRef = cache.writeFragment({
@@ -157,26 +158,28 @@ export default function Chat() {
       const { data } = await createMeeting({
         variables: { title, targetUserId: String(targetUser.id) },
       });
-      if (data?.createMeeting) {
-        openMeeting(data.createMeeting);
+      const meetingData = data as Record<string, Meeting> | null;
+      if (meetingData?.createMeeting) {
+        openMeeting(meetingData.createMeeting);
       }
     } catch (err) {
-      showToast(err.message, "error");
+      showToast(err instanceof Error ? err.message : "Erreur", "error");
     }
   };
 
   // ── Marquer comme lu à l'ouverture ──
   useEffect(() => {
-    if (!data?.conversation || !userId1) return;
-    const unreadIds = data.conversation
-      .filter((m) => !m.read && String(m.sender.id) !== String(userId1))
-      .map((m) => m.id);
+    const convData = data as Record<string, Message[]> | undefined;
+    if (!convData?.conversation || !userId1) return;
+    const unreadIds = convData.conversation
+      .filter((m: Message) => !m.read && String(m.sender.id) !== String(userId1))
+      .map((m: Message) => m.id);
     if (unreadIds.length > 0) {
       markAsRead({ variables: { messageIds: unreadIds } });
       cache.modify({
         fields: {
           conversation: (existingRefs = [], { readField }) => {
-            return existingRefs.map((ref) => {
+            return existingRefs.map((ref: Reference) => {
               const msgId = String(readField("id", ref));
               if (unreadIds.includes(msgId)) {
                 // Marquer comme lu dans le cache
@@ -204,7 +207,8 @@ export default function Chat() {
     variables,
     skip: !userId1 || !userId2,
     onData: ({ data: { data } }) => {
-      const newMsg = data?.messageSent;
+      const typed = data as Record<string, Message> | null;
+      const newMsg = typed?.messageSent;
       if (!newMsg) return;
       // Ignorer ses propres messages (déjà ajoutés via optimistic)
       if (String(newMsg.sender.id) === String(userId1)) return;
@@ -224,11 +228,10 @@ export default function Chat() {
     variables: { userId: userId1 },
     skip: !userId1,
     onData: ({ data: { data } }) => {
-      const evt = data?.messageRead;
+      const typed = data as Record<string, { messageId: string; senderId: string; receiverId: string }> | null;
+      const evt = typed?.messageRead;
       if (!evt) return;
       // Mettre à jour le champ read des messages envoyés
-      const existing = data?.conversation;
-      if (!existing) return;
       // Utiliser cache.modify sur chaque message concerné
       // On fait confiance au cache normalisé: Message:id est unique
     },
@@ -239,7 +242,8 @@ export default function Chat() {
     variables,
     skip: !userId1 || !userId2,
     onData: ({ data: { data } }) => {
-      const evt = data?.userTyping;
+      const typed = data as Record<string, { userId: string; isTyping: boolean }> | null;
+      const evt = typed?.userTyping;
       if (!evt) return;
       if (String(evt.userId) === String(userId1)) return;
       setIsTyping(evt.isTyping);
@@ -267,7 +271,7 @@ export default function Chat() {
     try {
       // Optimistic: le message apparaît AVANT la réponse serveur
       await sendMessage({
-        variables: { text: messageText.trim(), receiverId: userId2 },
+        variables: { text: messageText.trim(), receiverId: userId2! },
         optimisticResponse: {
           sendMessage: {
             __typename: "Message",
@@ -275,11 +279,13 @@ export default function Chat() {
             text: messageText.trim(),
             read: false,
             createdAt: new Date().toISOString(),
-            sender: { __typename: "User", id: userId1, name: currentUser.name },
-            receiver: { __typename: "User", id: userId2, name: targetUser.name },
+            sender: { __typename: "User", id: userId1!, name: currentUser!.name },
+            receiver: { __typename: "User", id: userId2!, name: targetUser!.name },
           },
         },
-        update: (cache, { data: { sendMessage: newMsg } }) => {
+        update: (cache, { data }) => {
+          const newMsg = (data as Record<string, Message>)?.sendMessage;
+          if (!newMsg) return;
           // Si le serveur a retourné un vrai ID, remplacer le temp
           if (newMsg.id !== tempId) {
             // Retirer le temp, ajouter le réel
@@ -287,7 +293,7 @@ export default function Chat() {
               fields: {
                 conversation: (existingRefs = [], { readField }) => {
                   const withoutTemp = existingRefs.filter(
-                    (ref) => String(readField("id", ref)) !== tempId
+                    (ref: Reference) => String(readField("id", ref)) !== tempId
                   );
                   const msgRef = cache.writeFragment({
                     data: newMsg,
@@ -301,14 +307,14 @@ export default function Chat() {
         },
       });
       setMessageText("");
-      setTypingMutation({ variables: { receiverId: userId2, isTyping: false } });
+      setTypingMutation({ variables: { receiverId: userId2!, isTyping: false } });
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     } catch (err) {
-      showToast(err.message, "error");
+      showToast(err instanceof Error ? err.message : "Erreur", "error");
     }
   };
 
-  const messages = data?.conversation || [];
+  const messages: Message[] = (data as Record<string, Message[]> | undefined)?.conversation || [];
 
   return (
     <div className="h-full flex flex-col overflow-hidden" style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-lg)", boxShadow: "var(--shadow-xs)" }}>
@@ -318,13 +324,13 @@ export default function Chat() {
         <div className="flex items-center gap-2 text-[0.88rem]">
           <div
             className="w-7 h-7 rounded-full grid place-items-center font-bold text-[0.65rem] text-white shrink-0 cursor-pointer transition-opacity duration-150 hover:opacity-75"
-            style={{ background: getAvatarGradient(targetUser.id) }}
-            onClick={() => openProfile?.(targetUser)}
+            style={{ background: getAvatarGradient(targetUser!.id) }}
+            onClick={() => openProfile?.(targetUser!)}
           >
-            {targetUser.name.charAt(0)}
+            {targetUser!.name.charAt(0)}
           </div>
-          <strong className="cursor-pointer transition-opacity duration-150 hover:opacity-75" style={{ color: "var(--text)" }} onClick={() => openProfile?.(targetUser)}>
-            {targetUser.name}
+          <strong className="cursor-pointer transition-opacity duration-150 hover:opacity-75" style={{ color: "var(--text)" }} onClick={() => openProfile?.(targetUser!)}>
+            {targetUser!.name}
           </strong>
         </div>
         <button className="ml-auto w-[34px] h-[34px] rounded-full grid place-items-center cursor-pointer transition-all duration-150 shrink-0" style={{ border: "1px solid var(--border)", background: "var(--surface-sunken)", color: "var(--text-secondary)" }} onClick={handleCall} title="Appel vidéo">
@@ -341,7 +347,7 @@ export default function Chat() {
             <div className="text-center py-8 text-[0.82rem]" style={{ color: "var(--text-tertiary)" }}>Chargement...</div>
           ) : messages.length === 0 ? (
             <div className="text-center py-10 px-4 text-[0.85rem]" style={{ color: "var(--text-tertiary)" }}>
-              Commence la conversation avec {targetUser.name} !
+              Commence la conversation avec {targetUser!.name} !
             </div>
           ) : (
             messages.map((msg) => {
@@ -392,7 +398,7 @@ export default function Chat() {
         <div className="flex items-center shrink-0" style={{ gap: "var(--sp-2)", padding: "var(--sp-3) var(--sp-4)", borderTop: "1px solid var(--border)" }}>
           <input
             type="text"
-            placeholder={`Écrire à ${targetUser.name}...`}
+            placeholder={`Écrire à ${targetUser!.name}...`}
             value={messageText}
             onChange={(e) => { setMessageText(e.target.value); handleTyping(); }}
             onKeyDown={(e) => e.key === "Enter" && handleSend()}
