@@ -1,6 +1,13 @@
-const API_BASE = import.meta.env.DEV ? '' : 'https://api.minisocial.app'
-const WS_URL = import.meta.env.DEV
-  ? `ws://${window.location.hostname}:3000/graphql`
-  : 'wss://api.minisocial.app/graphql'
+const API_BASE = typeof window !== 'undefined'
+  ? window.location.origin
+  : 'http://localhost:4000'
+
+function getWsUrl(): string {
+  if (typeof window === 'undefined') return ''
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${window.location.host}/graphql`
+}
+
+const WS_URL = getWsUrl()
 
 export { API_BASE, WS_URL }

@@ -4,3 +4,9 @@ client/dist/
 .env
 .env.*
 nul
+
+# Playwright & outils
+client/test-results/
+client/playwright-report/
+trace/
+.neon

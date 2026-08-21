@@ -9,7 +9,6 @@ import { gql, type Reference } from "@apollo/client";
 import CommentItem from "./CommentItem";
 import ImageCropModal from "../shared/ImageCropModal";
 import { getAvatarGradient, timeAgo } from "../../utils";
-import { GET_POSTS } from "./Feed";
 import useStore from "../../store";
 import type { Post } from "../../types";
 import type { User } from "../../store";

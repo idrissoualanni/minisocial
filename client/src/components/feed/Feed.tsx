@@ -2,15 +2,17 @@
 // Feed.jsx — Fil d'actualité avec les posts
 // ============================================================
 
-import { useQuery } from "@apollo/client/react";
 import { gql } from "@apollo/client";
+import apolloClient from "@/apollo";
 import { useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { usePosts } from "@/hooks/usePosts";
 import Composer from "./Composer";
 import PostCard from "./PostCard";
 import { useNotify } from "../../hooks/useNotifications";
-import type { Post } from "../../types";
+import type { Post, Comment as FeedComment } from "../../types";
 
-const POST_FIELDS = `
+const POST_FIELDS_SUB = `
   id title content imageUrl createdAt
   author { id name }
   comments { id text createdAt parentId author { id name } }
@@ -18,24 +20,11 @@ const POST_FIELDS = `
   likes { id }
 `;
 
-// --- Query ---
-export const GET_POSTS = gql`
-  query GetPosts {
-    posts {
-      ${POST_FIELDS}
-    }
-  }
-`;
-
-interface GetPostsData {
-  posts: Post[];
-}
-
-// --- Subscriptions ---
+// --- Subscriptions (restent sur Apollo temporairement) ---
 const POST_CREATED = gql`
   subscription OnPostCreated {
     postCreated {
-      ${POST_FIELDS}
+      ${POST_FIELDS_SUB}
     }
   }
 `;
@@ -50,31 +39,37 @@ const COMMENT_ADDED = gql`
   }
 `;
 
+interface GetPostsData {
+  posts: Post[];
+}
+
 export default function Feed() {
-  const { data, loading, error, subscribeToMore, client } = useQuery<GetPostsData>(GET_POSTS);
+  const { data, isLoading, isError, error } = usePosts();
+  const queryClient = useQueryClient();
   const notify = useNotify();
 
   // --- Abonnement aux nouveaux posts (autres utilisateurs) ---
   useEffect(() => {
-    const unsubscribe = subscribeToMore({
-      document: POST_CREATED,
-      updateQuery: ((prev: GetPostsData, { subscriptionData }: { subscriptionData: { data: unknown } }) => {
-        if (!subscriptionData.data) return prev;
-        const newPost = (subscriptionData.data as unknown as { postCreated: Post }).postCreated;
-        if (prev.posts.some((post) => post.id === newPost.id)) return prev;
-        return { posts: [newPost, ...prev.posts] };
-      }) as any,
+    const sub = apolloClient.subscribe<{ postCreated: Post }>({ query: POST_CREATED }).subscribe({
+      next: ({ data: subData }) => {
+        if (!subData?.postCreated) return;
+        const newPost = subData.postCreated;
+        queryClient.setQueryData<GetPostsData>(["posts"], (prev) => {
+          if (!prev) return prev;
+          if (prev.posts.some((p) => p.id === newPost.id)) return prev;
+          return { posts: [newPost, ...prev.posts] };
+        });
+      },
     });
-    return () => unsubscribe();
-  }, [subscribeToMore]);
+    return () => sub.unsubscribe();
+  }, [queryClient]);
 
   // --- Abonnement aux nouveaux commentaires ---
   useEffect(() => {
-    const unsubscribe = subscribeToMore({
-      document: COMMENT_ADDED,
-      updateQuery: ((prev: GetPostsData, { subscriptionData }: { subscriptionData: { data: unknown } }) => {
-        if (!subscriptionData.data) return prev;
-        const newComment = (subscriptionData.data as unknown as { commentAdded: Post["comments"][number] }).commentAdded;
+    const sub = apolloClient.subscribe<{ commentAdded: FeedComment }>({ query: COMMENT_ADDED }).subscribe({
+      next: ({ data: subData }) => {
+        if (!subData?.commentAdded) return;
+        const newComment = subData.commentAdded;
         const postId = newComment.post.id;
 
         if (document.hidden) {
@@ -84,26 +79,29 @@ export default function Feed() {
           );
         }
 
-        return {
-          posts: prev.posts.map((post) => {
-            if (post.id !== postId) return post;
-            if (post.comments.some((c) => c.id === newComment.id)) return post;
-            return { ...post, comments: [...post.comments, newComment] };
-          }),
-        };
-      }) as any,
+        queryClient.setQueryData<GetPostsData>(["posts"], (prev) => {
+          if (!prev) return prev;
+          return {
+            posts: prev.posts.map((post) => {
+              if (post.id !== postId) return post;
+              if (post.comments.some((c) => c.id === newComment.id)) return post;
+              return { ...post, comments: [...post.comments, newComment] };
+            }),
+          };
+        });
+      },
     });
-    return () => unsubscribe();
-  }, [subscribeToMore, notify]);
+    return () => sub.unsubscribe();
+  }, [queryClient, notify]);
 
-  if (loading) return <div className="text-center py-12 px-4" style={{ color: "var(--text-tertiary)" }}><p>Chargement...</p></div>;
-  if (error) return <div className="text-center py-12 px-4" style={{ color: "var(--error)" }}><p>Erreur: {error.message}</p></div>;
+  if (isLoading) return <div className="text-center py-12 px-4" style={{ color: "var(--text-tertiary)" }}><p>Chargement...</p></div>;
+  if (isError) return <div className="text-center py-12 px-4" style={{ color: "var(--error)" }}><p>Erreur: {error.message}</p></div>;
 
   return (
     <>
       <Composer />
       <div className="flex flex-col gap-5">
-        {data!.posts.map((post) => (
+        {data?.posts.map((post) => (
           <PostCard
             key={post.id}
             post={post}

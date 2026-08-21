@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useSubscription, useApolloClient } from "@apollo/client/react";
 import { gql, type Reference } from "@apollo/client";
+import { useGroups } from "@/hooks/useGroups";
 import { getAvatarGradient, timeAgo } from "../../utils";
 import CreateGroup from "./CreateGroup";
 import useStore from "../../store";
@@ -63,16 +64,6 @@ const GET_PERMISSION = gql`
   }
 `;
 
-const MY_GROUPS = gql`
-  query MyGroups($userId: ID!) {
-    myGroups(userId: $userId) {
-      id name createdAt
-      creator { id name }
-      members { user { id name isOnline } isCreator }
-    }
-  }
-`;
-
 const REQUEST_CHAT = gql`
   mutation RequestChat($receiverId: ID!) {
     requestChat(receiverId: $receiverId) {
@@ -121,10 +112,6 @@ interface PendingData {
   pendingRequests: PendingRequest[];
 }
 
-interface GroupsData {
-  myGroups: Group[];
-}
-
 export default function ChatLobby() {
   const currentUser = useStore((s) => s.currentUser);
   const showToast = useStore((s) => s.showToast);
@@ -138,9 +125,7 @@ export default function ChatLobby() {
   const { data: pendingData, refetch: refetchPending } = useQuery<PendingData>(GET_PENDING, {
     variables: { userId: currentUser?.id }, skip: !currentUser,
   });
-  const { data: groupsData, refetch: refetchGroups } = useQuery<GroupsData>(MY_GROUPS, {
-    variables: { userId: currentUser?.id }, skip: !currentUser,
-  });
+  const { data: groupsData, refetch: refetchGroups } = useGroups(currentUser?.id);
 
   const [requestChat] = useMutation(REQUEST_CHAT, {
     onCompleted: () => { showToast("Demande envoyée !"); refetchPreviews(); },

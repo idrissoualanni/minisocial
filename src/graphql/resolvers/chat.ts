@@ -1,76 +1,12 @@
 import type { Context } from "../context.js";
 import type { AppUser } from "../../db/index.js";
-import db from "../../db/index.js";
+import { db } from "../../db/drizzle-client.js";
+import { appUsers, messages, chatPermissions } from "../../db/schema.js";
+import { eq, or, and, desc, count as drizzleCount, sql } from "drizzle-orm";
 import { pubsub, EVENTS } from "../pubsub.js";
 import { encrypt, decrypt } from "../../utils/crypto.js";
 
-interface MessageRow {
-  id: number;
-  text: string;
-  sender_id: number;
-  receiver_id: number;
-  read: number;
-  created_at: string;
-}
-
-interface PermissionRow {
-  id: number;
-  sender_id: number;
-  receiver_id: number;
-  status: string;
-  created_at: string;
-  updated_at: string;
-}
-
-const stmts = {
-  allUsers: db.prepare("SELECT * FROM app_users ORDER BY id"),
-  userById: db.prepare("SELECT * FROM app_users WHERE id = ?"),
-
-  conversation: db.prepare(`
-    SELECT * FROM messages
-    WHERE (sender_id = ? AND receiver_id = ?)
-       OR (sender_id = ? AND receiver_id = ?)
-    ORDER BY created_at ASC
-  `),
-  insertMessage: db.prepare(
-    "INSERT INTO messages (text, sender_id, receiver_id) VALUES (?, ?, ?)"
-  ),
-  messageById: db.prepare("SELECT * FROM messages WHERE id = ?"),
-  markAsRead: db.prepare("UPDATE messages SET read = 1 WHERE id = ?"),
-  updateLastSeen: db.prepare("UPDATE app_users SET last_seen = datetime('now') WHERE id = ?"),
-
-  permissionBetween: db.prepare(`
-    SELECT * FROM chat_permissions
-    WHERE (sender_id = ? AND receiver_id = ?)
-       OR (sender_id = ? AND receiver_id = ?)
-    LIMIT 1
-  `),
-  insertPermission: db.prepare(
-    "INSERT INTO chat_permissions (sender_id, receiver_id, status) VALUES (?, ?, ?)"
-  ),
-  updatePermissionStatus: db.prepare(
-    "UPDATE chat_permissions SET status = ?, updated_at = datetime('now') WHERE id = ?"
-  ),
-  permissionById: db.prepare("SELECT * FROM chat_permissions WHERE id = ?"),
-  pendingReceived: db.prepare(
-    "SELECT * FROM chat_permissions WHERE receiver_id = ? AND status = 'pending'"
-  ),
-
-  lastMessageFrom: db.prepare(`
-    SELECT * FROM messages WHERE sender_id = ? AND receiver_id = ?
-    ORDER BY created_at DESC LIMIT 1
-  `),
-  lastMessageTo: db.prepare(`
-    SELECT * FROM messages WHERE sender_id = ? AND receiver_id = ?
-    ORDER BY created_at DESC LIMIT 1
-  `),
-  unreadCount: db.prepare(`
-    SELECT COUNT(*) as count FROM messages
-    WHERE sender_id = ? AND receiver_id = ? AND read = 0
-  `),
-};
-
-function decryptMessage(msg: MessageRow): MessageRow {
+function decryptMessage(msg: any) {
   return { ...msg, text: decrypt(msg.text) };
 }
 
@@ -78,86 +14,193 @@ const typingStore = new Map<string, ReturnType<typeof setTimeout>>();
 
 export default {
   Query: {
-    conversation: (_: unknown, { userId1, userId2 }: { userId1: string; userId2: string }, { user }: Context): MessageRow[] => {
+    conversation: async (
+      _: unknown,
+      { userId1, userId2 }: { userId1: string; userId2: string },
+      { user }: Context
+    ) => {
       if (!user) throw new Error("Non authentifié");
       const uid = user.id;
       if (uid !== Number(userId1) && uid !== Number(userId2)) {
         throw new Error("Accès refusé — tu ne peux lire que tes propres conversations.");
       }
-      const perm = stmts.permissionBetween.get(userId1, userId2, userId2, userId1) as PermissionRow | undefined;
+      const perm = await db
+        .select()
+        .from(chatPermissions)
+        .where(
+          or(
+            and(eq(chatPermissions.senderId, Number(userId1)), eq(chatPermissions.receiverId, Number(userId2))),
+            and(eq(chatPermissions.senderId, Number(userId2)), eq(chatPermissions.receiverId, Number(userId1)))
+          )
+        )
+        .limit(1)
+        .then((r) => r[0]);
       if (!perm || perm.status !== "accepted") {
         throw new Error("Vous devez être connecté pour lire cette conversation.");
       }
-      return (stmts.conversation.all(userId1, userId2, userId2, userId1) as MessageRow[]).map(decryptMessage);
+      const rows = await db
+        .select()
+        .from(messages)
+        .where(
+          or(
+            and(eq(messages.senderId, Number(userId1)), eq(messages.receiverId, Number(userId2))),
+            and(eq(messages.senderId, Number(userId2)), eq(messages.receiverId, Number(userId1)))
+          )
+        )
+        .orderBy(messages.createdAt);
+      return rows.map(decryptMessage);
     },
 
-    chatPermission: (_: unknown, { userId1, userId2 }: { userId1: string; userId2: string }, { user }: Context): PermissionRow | null => {
+    chatPermission: async (
+      _: unknown,
+      { userId1, userId2 }: { userId1: string; userId2: string },
+      { user }: Context
+    ) => {
       if (!user) throw new Error("Non authentifié");
       if (user.id !== Number(userId1) && user.id !== Number(userId2)) {
         throw new Error("Accès refusé — tu ne peux voir que tes propres permissions.");
       }
-      return (stmts.permissionBetween.get(userId1, userId2, userId2, userId1) as PermissionRow) || null;
+      const result = await db
+        .select()
+        .from(chatPermissions)
+        .where(
+          or(
+            and(eq(chatPermissions.senderId, Number(userId1)), eq(chatPermissions.receiverId, Number(userId2))),
+            and(eq(chatPermissions.senderId, Number(userId2)), eq(chatPermissions.receiverId, Number(userId1)))
+          )
+        )
+        .limit(1)
+        .then((r) => r[0]);
+      return result || null;
     },
 
-    pendingRequests: (_: unknown, { userId }: { userId: string }, { user }: Context): PermissionRow[] => {
+    pendingRequests: async (
+      _: unknown,
+      { userId }: { userId: string },
+      { user }: Context
+    ) => {
       if (!user) throw new Error("Non authentifié");
       if (user.id !== Number(userId)) {
         throw new Error("Accès refusé.");
       }
-      return stmts.pendingReceived.all(userId) as PermissionRow[];
+      return await db
+        .select()
+        .from(chatPermissions)
+        .where(
+          and(eq(chatPermissions.receiverId, Number(userId)), eq(chatPermissions.status, "pending"))
+        );
     },
 
-    conversationPreviews: (_: unknown, { userId }: { userId: string }, { user }: Context) => {
+    conversationPreviews: async (_: unknown, { userId }: { userId: string }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
       if (user.id !== Number(userId)) {
         throw new Error("Accès refusé — tu ne peux voir que tes propres conversations.");
       }
-      const others = (stmts.allUsers.all() as AppUser[]).filter((u) => u.id !== Number(userId));
-      return others.map((other) => {
-        const fromOther = stmts.lastMessageFrom.get(other.id, userId) as MessageRow | undefined;
-        const fromMe = stmts.lastMessageTo.get(userId, other.id) as MessageRow | undefined;
-        let lastMessage: MessageRow | null = null;
-        if (fromOther && fromMe) {
-          lastMessage = fromOther.created_at > fromMe.created_at ? fromOther : fromMe;
-        } else {
-          lastMessage = fromOther || fromMe || null;
-        }
-        if (lastMessage) lastMessage = decryptMessage(lastMessage);
-        const unread = stmts.unreadCount.get(other.id, userId) as { count: number };
-        return { user: other, lastMessage, unreadCount: unread.count };
-      });
+      const allUsers = await db.select().from(appUsers).orderBy(appUsers.id);
+      const others = allUsers.filter((u) => u.id !== Number(userId));
+
+      const previews = await Promise.all(
+        others.map(async (other) => {
+          const fromOther = await db
+            .select()
+            .from(messages)
+            .where(and(eq(messages.senderId, other.id), eq(messages.receiverId, Number(userId))))
+            .orderBy(desc(messages.createdAt))
+            .limit(1)
+            .then((r) => r[0]);
+
+          const fromMe = await db
+            .select()
+            .from(messages)
+            .where(and(eq(messages.senderId, Number(userId)), eq(messages.receiverId, other.id)))
+            .orderBy(desc(messages.createdAt))
+            .limit(1)
+            .then((r) => r[0]);
+
+          let lastMessage: any = null;
+          if (fromOther && fromMe) {
+            const otherTime = fromOther.createdAt instanceof Date ? fromOther.createdAt.getTime() : new Date(fromOther.createdAt as any).getTime();
+            const meTime = fromMe.createdAt instanceof Date ? fromMe.createdAt.getTime() : new Date(fromMe.createdAt as any).getTime();
+            lastMessage = otherTime > meTime ? fromOther : fromMe;
+          } else {
+            lastMessage = fromOther || fromMe || null;
+          }
+          if (lastMessage) lastMessage = decryptMessage(lastMessage);
+
+          const unreadResult = await db
+            .select({ count: drizzleCount() })
+            .from(messages)
+            .where(
+              and(
+                eq(messages.senderId, other.id),
+                eq(messages.receiverId, Number(userId)),
+                eq(messages.read, 0)
+              )
+            )
+            .then((r) => r[0]);
+
+          return { user: other, lastMessage, unreadCount: Number(unreadResult.count) };
+        })
+      );
+
+      return previews;
     },
   },
 
   Mutation: {
-    sendMessage: (_: unknown, { text, receiverId }: { text: string; receiverId: string }, { user }: Context): MessageRow => {
+    sendMessage: async (
+      _: unknown,
+      { text, receiverId }: { text: string; receiverId: string },
+      { user }: Context
+    ) => {
       if (!user) throw new Error("Non authentifié");
-      const receiver = stmts.userById.get(receiverId) as AppUser | undefined;
+      const receiver = await db.select().from(appUsers).where(eq(appUsers.id, Number(receiverId))).then((r) => r[0]);
       if (!receiver) throw new Error("Le destinataire n'existe pas.");
       if (user.id === Number(receiverId)) throw new Error("Vous ne pouvez pas vous écrire à vous-même.");
-      const perm = stmts.permissionBetween.get(user.id, receiverId, receiverId, user.id) as PermissionRow | undefined;
+      const perm = await db
+        .select()
+        .from(chatPermissions)
+        .where(
+          or(
+            and(eq(chatPermissions.senderId, user.id), eq(chatPermissions.receiverId, Number(receiverId))),
+            and(eq(chatPermissions.senderId, Number(receiverId)), eq(chatPermissions.receiverId, user.id))
+          )
+        )
+        .limit(1)
+        .then((r) => r[0]);
       if (!perm || perm.status !== "accepted") {
         throw new Error("Vous devez d'abord obtenir l'autorisation.");
       }
       const encrypted = encrypt(text);
-      const result = stmts.insertMessage.run(encrypted, user.id, receiverId);
-      const newMessage = stmts.messageById.get(result.lastInsertRowid) as MessageRow;
+      const [newMessage] = await db
+        .insert(messages)
+        .values({
+          text: encrypted,
+          senderId: user.id,
+          receiverId: Number(receiverId),
+        })
+        .returning();
       const decrypted = decryptMessage(newMessage);
       pubsub.publish(EVENTS.MESSAGE_SENT, { messageSent: decrypted });
       pubsub.publish(EVENTS.MESSAGE_SENT_TO_USER, { messageSentToUser: decrypted });
       return decrypted;
     },
 
-    markAsRead: (_: unknown, { messageIds }: { messageIds: string[] }, { user }: Context): boolean => {
+    markAsRead: async (_: unknown, { messageIds }: { messageIds: string[] }, { user }: Context): Promise<boolean> => {
       if (!user) throw new Error("Non authentifié");
-      const update = db.prepare("UPDATE messages SET read = 1 WHERE id = ? AND receiver_id = ?");
-      const batch = db.transaction((ids: string[]) => { for (const id of ids) update.run(id, user.id); });
-      batch(messageIds);
+      await db.transaction(async (tx) => {
+        for (const id of messageIds) {
+          await tx
+            .update(messages)
+            .set({ read: 1 })
+            .where(and(eq(messages.id, Number(id)), eq(messages.receiverId, user.id)));
+        }
+      });
       for (const id of messageIds) {
-        const msg = stmts.messageById.get(id) as MessageRow | undefined;
-        if (msg && msg.receiver_id === user.id) {
+        const msg = await db.select().from(messages).where(eq(messages.id, Number(id))).then((r) => r[0]);
+        if (msg && msg.receiverId === user.id) {
           pubsub.publish(EVENTS.MESSAGE_READ, {
-            messageRead: { messageId: String(id), senderId: msg.sender_id, receiverId: msg.receiver_id },
+            messageRead: { messageId: String(id), senderId: msg.senderId, receiverId: msg.receiverId },
           });
         }
       }
@@ -186,56 +229,93 @@ export default {
       return true;
     },
 
-    requestChat: (_: unknown, { receiverId }: { receiverId: string }, { user }: Context): PermissionRow => {
+    requestChat: async (
+      _: unknown,
+      { receiverId }: { receiverId: string },
+      { user }: Context
+    ) => {
       if (!user) throw new Error("Non authentifié");
       if (user.id === Number(receiverId)) throw new Error("Vous ne pouvez pas vous écrire à vous-même.");
-      const receiver = stmts.userById.get(receiverId) as AppUser | undefined;
+      const receiver = await db.select().from(appUsers).where(eq(appUsers.id, Number(receiverId))).then((r) => r[0]);
       if (!receiver) throw new Error("Le destinataire n'existe pas.");
-      const existing = stmts.permissionBetween.get(user.id, receiverId, receiverId, user.id) as PermissionRow | undefined;
+      const existing = await db
+        .select()
+        .from(chatPermissions)
+        .where(
+          or(
+            and(eq(chatPermissions.senderId, user.id), eq(chatPermissions.receiverId, Number(receiverId))),
+            and(eq(chatPermissions.senderId, Number(receiverId)), eq(chatPermissions.receiverId, user.id))
+          )
+        )
+        .limit(1)
+        .then((r) => r[0]);
       if (existing) {
         if (existing.status === "accepted") throw new Error("Vous êtes déjà connecté.");
         if (existing.status === "pending") throw new Error("La demande est déjà en attente.");
-        stmts.updatePermissionStatus.run("pending", existing.id);
-        const updated = stmts.permissionById.get(existing.id) as PermissionRow;
+        await db
+          .update(chatPermissions)
+          .set({ status: "pending", updatedAt: new Date() })
+          .where(eq(chatPermissions.id, existing.id));
+        const updated = await db.select().from(chatPermissions).where(eq(chatPermissions.id, existing.id)).then((r) => r[0]);
         pubsub.publish(EVENTS.CHAT_PERMISSION_UPDATED, { chatPermissionUpdated: updated });
         return updated;
       }
-      const result = stmts.insertPermission.run(user.id, receiverId, "pending");
-      const perm = stmts.permissionById.get(result.lastInsertRowid) as PermissionRow;
+      const [perm] = await db
+        .insert(chatPermissions)
+        .values({
+          senderId: user.id,
+          receiverId: Number(receiverId),
+          status: "pending",
+        })
+        .returning();
       pubsub.publish(EVENTS.CHAT_PERMISSION_UPDATED, { chatPermissionUpdated: perm });
       return perm;
     },
 
-    acceptChat: (_: unknown, { permissionId }: { permissionId: string }, { user }: Context): PermissionRow => {
+    acceptChat: async (
+      _: unknown,
+      { permissionId }: { permissionId: string },
+      { user }: Context
+    ) => {
       if (!user) throw new Error("Non authentifié");
-      const perm = stmts.permissionById.get(permissionId) as PermissionRow | undefined;
+      const perm = await db.select().from(chatPermissions).where(eq(chatPermissions.id, Number(permissionId))).then((r) => r[0]);
       if (!perm) throw new Error("Demande introuvable.");
       if (perm.status !== "pending") throw new Error("Cette demande n'est plus en attente.");
-      if (perm.receiver_id !== user.id) {
+      if (perm.receiverId !== user.id) {
         throw new Error("Accès refusé — tu ne peux accepter que les demandes qui te sont adressées.");
       }
-      stmts.updatePermissionStatus.run("accepted", permissionId);
-      const updated = stmts.permissionById.get(permissionId) as PermissionRow;
+      await db
+        .update(chatPermissions)
+        .set({ status: "accepted", updatedAt: new Date() })
+        .where(eq(chatPermissions.id, Number(permissionId)));
+      const updated = await db.select().from(chatPermissions).where(eq(chatPermissions.id, Number(permissionId))).then((r) => r[0]);
       pubsub.publish(EVENTS.CHAT_PERMISSION_UPDATED, { chatPermissionUpdated: updated });
       return updated;
     },
 
-    rejectChat: (_: unknown, { permissionId }: { permissionId: string }, { user }: Context): PermissionRow => {
+    rejectChat: async (
+      _: unknown,
+      { permissionId }: { permissionId: string },
+      { user }: Context
+    ) => {
       if (!user) throw new Error("Non authentifié");
-      const perm = stmts.permissionById.get(permissionId) as PermissionRow | undefined;
+      const perm = await db.select().from(chatPermissions).where(eq(chatPermissions.id, Number(permissionId))).then((r) => r[0]);
       if (!perm) throw new Error("Demande introuvable.");
-      if (perm.receiver_id !== user.id) {
+      if (perm.receiverId !== user.id) {
         throw new Error("Accès refusé — tu ne peux rejeter que les demandes qui te sont adressées.");
       }
-      stmts.updatePermissionStatus.run("rejected", permissionId);
-      const updated = stmts.permissionById.get(permissionId) as PermissionRow;
+      await db
+        .update(chatPermissions)
+        .set({ status: "rejected", updatedAt: new Date() })
+        .where(eq(chatPermissions.id, Number(permissionId)));
+      const updated = await db.select().from(chatPermissions).where(eq(chatPermissions.id, Number(permissionId))).then((r) => r[0]);
       pubsub.publish(EVENTS.CHAT_PERMISSION_UPDATED, { chatPermissionUpdated: updated });
       return updated;
     },
 
-    updateLastSeen: (_: unknown, __: unknown, { user }: Context): boolean => {
+    updateLastSeen: async (_: unknown, __: unknown, { user }: Context): Promise<boolean> => {
       if (!user) throw new Error("Non authentifié");
-      stmts.updateLastSeen.run(user.id);
+      await db.update(appUsers).set({ lastSeen: new Date() }).where(eq(appUsers.id, user.id));
       return true;
     },
   },
@@ -315,16 +395,24 @@ export default {
   },
 
   Message: {
-    sender: (parent: MessageRow) => stmts.userById.get(parent.sender_id),
-    receiver: (parent: MessageRow) => stmts.userById.get(parent.receiver_id),
-    createdAt: (parent: MessageRow) => parent.created_at,
+    sender: async (parent: any) => {
+      return await db.select().from(appUsers).where(eq(appUsers.id, parent.senderId)).then((r) => r[0]);
+    },
+    receiver: async (parent: any) => {
+      return await db.select().from(appUsers).where(eq(appUsers.id, parent.receiverId)).then((r) => r[0]);
+    },
+    createdAt: (parent: any) => parent.createdAt,
   },
 
   ChatPermission: {
-    sender: (parent: PermissionRow) => stmts.userById.get(parent.sender_id),
-    receiver: (parent: PermissionRow) => stmts.userById.get(parent.receiver_id),
-    createdAt: (parent: PermissionRow) => parent.created_at,
-    updatedAt: (parent: PermissionRow) => parent.updated_at,
+    sender: async (parent: any) => {
+      return await db.select().from(appUsers).where(eq(appUsers.id, parent.senderId)).then((r) => r[0]);
+    },
+    receiver: async (parent: any) => {
+      return await db.select().from(appUsers).where(eq(appUsers.id, parent.receiverId)).then((r) => r[0]);
+    },
+    createdAt: (parent: any) => parent.createdAt,
+    updatedAt: (parent: any) => parent.updatedAt,
   },
 
   ConversationPreview: {

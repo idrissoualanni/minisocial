@@ -14,7 +14,7 @@ export async function getUserFromRequest(req: IncomingMessage): Promise<AppUser 
       headers: req.headers as Record<string, string>,
     });
     if (!session?.user) return null;
-    return ensureAppUser(session.user as any);
+    return await ensureAppUser(session.user as any);
   } catch {
     return null;
   }

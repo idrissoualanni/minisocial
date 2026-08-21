@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node src/server.js",
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -13,25 +15,29 @@
   "type": "module",
   "dependencies": {
     "@apollo/server": "^4.11.3",
+    "@better-auth/drizzle-adapter": "^1.6.24",
     "@graphql-tools/schema": "^10.0.38",
     "better-auth": "^1.6.23",
-    "better-sqlite3": "^12.11.1",
     "cors": "^2.8.5",
+    "drizzle-orm": "^0.45.2",
     "express": "^4.21.2",
     "express-rate-limit": "^8.6.0",
     "graphql": "^16.10.0",
     "graphql-subscriptions": "^3.0.0",
     "graphql-ws": "^6.1.0",
     "natural": "^8.1.1",
+    "pg": "^8.22.0",
     "ws": "^8.21.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.1.1",
+    "@types/pg": "^8.20.0",
     "@types/ws": "^8.18.1",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.23.1",
     "typescript": "^7.0.2"
   }
 }

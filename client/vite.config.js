@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -10,10 +11,17 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.ts'],
+    css: true,
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+  },
   server: {
     proxy: {
-      '/api/auth': 'http://localhost:3000',
-      '/graphql': 'http://localhost:3000',
+      '/api/auth': 'http://localhost:4000',
+      '/graphql': 'http://localhost:4000',
     },
   },
 })

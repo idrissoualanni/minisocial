@@ -3,6 +3,7 @@ import { useQuery, useSubscription } from "@apollo/client/react";
 import { gql } from "@apollo/client";
 import useStore from "./store";
 import { useSession, signOut } from "./lib/auth-client";
+import { useMe } from "./hooks/useMe";
 import Header from "./components/layout/Header";
 import Feed from "./components/feed/Feed";
 import ChatLobby from "./components/chat/ChatLobby";
@@ -27,22 +28,6 @@ interface IncomingCall {
   fromUser?: { id: string; name: string };
   toUserId: string;
 }
-
-interface MeData {
-  me: {
-    id: string;
-    name: string;
-    email: string;
-    role: string;
-    bio: string | null;
-  } | null;
-}
-
-const GET_ME = gql`
-  query GetMe {
-    me { id name email role bio }
-  }
-`;
 
 const GET_USERS = gql`
   query GetUsers {
@@ -72,17 +57,12 @@ export default function App() {
   const [authView, setAuthView] = useState<"login" | "register">("login");
   const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
 
-  // Fetch full user data from our app_users via GraphQL
-  const { data: meData } = useQuery<MeData>(GET_ME, {
-    skip: !session,
-    fetchPolicy: "cache-and-network",
-  });
-
-  const currentUser = meData?.me || null;
+  // Fetch full user data from our app_users via TanStack Query
+  const { data: currentUser } = useMe(session);
 
   // Sync currentUser into Zustand store so child components can access it
   useEffect(() => {
-    setCurrentUser(currentUser);
+    setCurrentUser(currentUser ?? null);
   }, [currentUser, setCurrentUser]);
 
   // Clear store on logout
@@ -93,7 +73,7 @@ export default function App() {
   }, [session, isPending, setCurrentUser]);
 
   useNotificationSetup();
-  useHeartbeat(currentUser);
+  useHeartbeat(currentUser ?? null);
   useSystemNotifications();
 
   useQuery(GET_USERS, { skip: !currentUser });

@@ -1,9 +1,14 @@
 // src/auth.ts — Better Auth configuration
 import { betterAuth } from "better-auth";
-import db from "./db/index.js";
+import pg from "pg";
+
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
 export const auth = betterAuth({
-  database: db,
+  database: pool,
   baseURL: process.env.BETTER_AUTH_URL || "http://localhost:4000",
   emailAndPassword: {
     enabled: true,

@@ -12,7 +12,6 @@ import { dirname, join } from "path";
 import { existsSync } from "fs";
 import { toNodeHandler } from "better-auth/node";
 
-import db from "./db/index.js";
 
 import typeDefs from "./graphql/schema/typeDefs.js";
 import resolvers from "./graphql/resolvers/index.js";

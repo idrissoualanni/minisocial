@@ -7,7 +7,6 @@ import { useQuery, useMutation } from "@apollo/client/react";
 import { gql } from "@apollo/client";
 import PostCard from "../feed/PostCard";
 import { getAvatarGradient } from "../../utils";
-import { GET_POSTS } from "../feed/Feed";
 import useStore from "../../store";
 import type { Post, User } from "@/types";
 

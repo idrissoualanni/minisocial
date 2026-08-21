@@ -1,52 +1,79 @@
 import type { Context } from "../context.js";
 import type { AppUser } from "../../db/index.js";
-import db from "../../db/index.js";
-
-const stmts = {
-  allUsers: db.prepare("SELECT * FROM app_users ORDER BY id"),
-  userById: db.prepare("SELECT * FROM app_users WHERE id = ?"),
-  userByEmail: db.prepare("SELECT * FROM app_users WHERE email = ?"),
-  postsByAuthor: db.prepare("SELECT * FROM posts WHERE author_id = ? ORDER BY created_at DESC"),
-  countPostsByUser: db.prepare("SELECT COUNT(*) as count FROM posts WHERE author_id = ?"),
-};
+import { db } from "../../db/drizzle-client.js";
+import { appUsers, posts } from "../../db/schema.js";
+import { eq, and, count as drizzleCount, desc } from "drizzle-orm";
 
 export default {
   Query: {
-    me: (_: unknown, __: unknown, { user }: Context): AppUser | null => {
+    me: async (_: unknown, __: unknown, { user }: Context): Promise<AppUser | null> => {
       if (!user) throw new Error("Non authentifié");
       return user;
     },
-    users: (): AppUser[] => stmts.allUsers.all() as AppUser[],
-    user: (_: unknown, { id }: { id: string }): AppUser | null =>
-      (stmts.userById.get(id) as AppUser) || null,
+    users: async (): Promise<AppUser[]> => {
+      return await db.select().from(appUsers).orderBy(appUsers.id) as AppUser[];
+    },
+    user: async (_: unknown, { id }: { id: string }): Promise<AppUser | null> => {
+      const result = await db.select().from(appUsers).where(eq(appUsers.id, Number(id))).then((r) => r[0]);
+      return (result as AppUser) || null;
+    },
   },
 
   Mutation: {
-    updateUser: (_: unknown, { id, name, email, bio }: { id: string; name?: string; email?: string; bio?: string }, { user }: Context): AppUser => {
+    updateUser: async (
+      _: unknown,
+      { id, name, email, bio }: { id: string; name?: string; email?: string; bio?: string },
+      { user }: Context
+    ): Promise<AppUser> => {
       if (!user) throw new Error("Non authentifié");
       if (user.id !== Number(id)) {
         throw new Error("Accès refusé — tu ne peux modifier que ton propre profil.");
       }
-      const existing = stmts.userById.get(id) as AppUser | undefined;
+      const existing = await db
+        .select()
+        .from(appUsers)
+        .where(eq(appUsers.id, Number(id)))
+        .then((r) => r[0]);
       if (!existing) throw new Error("Utilisateur introuvable.");
       if (email && email !== existing.email) {
-        const dup = db.prepare("SELECT id FROM app_users WHERE email = ? AND id != ?").get(email, id);
+        const dup = await db
+          .select({ id: appUsers.id })
+          .from(appUsers)
+          .where(and(eq(appUsers.email, email), eq(appUsers.id, Number(id))))
+          .then((r) => r[0]);
         if (dup) throw new Error("Cet email est déjà utilisé.");
       }
-      db.prepare("UPDATE app_users SET name = ?, email = ?, bio = ? WHERE id = ?").run(
-        name || existing.name, email || existing.email, bio ?? existing.bio ?? "", id
-      );
-      return stmts.userById.get(id) as AppUser;
+      await db
+        .update(appUsers)
+        .set({
+          name: name || existing.name,
+          email: email || existing.email,
+          bio: bio ?? existing.bio ?? "",
+        })
+        .where(eq(appUsers.id, Number(id)));
+      const updated = await db.select().from(appUsers).where(eq(appUsers.id, Number(id))).then((r) => r[0]);
+      return updated as AppUser;
     },
   },
 
   User: {
-    posts: (parent: AppUser) => stmts.postsByAuthor.all(parent.id),
-    postCount: (parent: AppUser): number => (stmts.countPostsByUser.get(parent.id) as any).count,
+    posts: async (parent: AppUser) => {
+      return await db.select().from(posts).where(eq(posts.authorId, parent.id)).orderBy(desc(posts.createdAt));
+    },
+    postCount: async (parent: AppUser): Promise<number> => {
+      const result = await db
+        .select({ count: drizzleCount() })
+        .from(posts)
+        .where(eq(posts.authorId, parent.id))
+        .then((r) => r[0]);
+      return Number(result.count);
+    },
     role: (parent: AppUser): string => parent.bio !== undefined ? (parent as any).role || "user" : "user",
     isOnline: (parent: AppUser): boolean => {
-      if (!parent.last_seen) return false;
-      const lastSeen = new Date(parent.last_seen + "Z");
+      if (!parent.lastSeen) return false;
+      const lastSeen = parent.lastSeen instanceof Date
+        ? parent.lastSeen
+        : new Date(parent.lastSeen + "Z");
       const now = new Date();
       return (now.getTime() - lastSeen.getTime()) < 30_000;
     },

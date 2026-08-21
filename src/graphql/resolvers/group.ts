@@ -1,125 +1,143 @@
 import type { Context } from "../context.js";
 import type { AppUser } from "../../db/index.js";
-import db from "../../db/index.js";
+import { db } from "../../db/drizzle-client.js";
+import { appUsers, chatGroups, groupMembers, groupMessages } from "../../db/schema.js";
+import { eq, and, desc } from "drizzle-orm";
 import { pubsub, EVENTS } from "../pubsub.js";
 import { encrypt, decrypt } from "../../utils/crypto.js";
 
-const stmts = {
-  userById: db.prepare("SELECT * FROM app_users WHERE id = ?"),
-
-  insertGroup: db.prepare("INSERT INTO chat_groups (name, creator_id) VALUES (?, ?)"),
-  groupById: db.prepare("SELECT * FROM chat_groups WHERE id = ?"),
-  insertGroupMember: db.prepare("INSERT OR IGNORE INTO group_members (group_id, user_id, is_creator) VALUES (?, ?, ?)"),
-  groupMembers: db.prepare(`
-    SELECT gm.*, u.name, u.email, u.last_seen
-    FROM group_members gm JOIN app_users u ON gm.user_id = u.id
-    WHERE gm.group_id = ?
-  `),
-  isGroupMember: db.prepare("SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?"),
-  myGroups: db.prepare(`
-    SELECT cg.* FROM chat_groups cg
-    JOIN group_members gm ON cg.id = gm.group_id
-    WHERE gm.user_id = ?
-    ORDER BY cg.created_at DESC
-  `),
-  insertGroupMessage: db.prepare(
-    "INSERT INTO group_messages (text, sender_id, group_id) VALUES (?, ?, ?)"
-  ),
-  groupMessageById: db.prepare("SELECT * FROM group_messages WHERE id = ?"),
-  groupMessages: db.prepare(`
-    SELECT * FROM group_messages WHERE group_id = ?
-    ORDER BY created_at DESC LIMIT ?
-  `),
-  removeGroupMember: db.prepare("DELETE FROM group_members WHERE group_id = ? AND user_id = ?"),
-};
-
-interface ChatGroupResult {
-  id: number;
-  name: string;
-  creator_id: number;
-  created_at: string;
-}
-
-interface GroupMemberResult {
-  user_id: number;
-  name: string;
-  email: string;
-  last_seen: string;
-  is_creator: number;
-  joined_at: string;
-}
-
-interface GroupMessageResult {
-  id: number;
-  text: string;
-  sender_id: number;
-  group_id: number;
-  created_at: string;
-}
-
 export default {
   Query: {
-    myGroups: (_: unknown, { userId }: { userId: string }, { user }: Context) => {
+    myGroups: async (_: unknown, { userId }: { userId: string }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
       if (user.id !== Number(userId)) {
         throw new Error("Accès refusé — tu ne peux voir que tes propres groupes.");
       }
-      return stmts.myGroups.all(userId);
+      return await db
+        .select({
+          id: chatGroups.id,
+          name: chatGroups.name,
+          creator_id: chatGroups.creatorId,
+          created_at: chatGroups.createdAt,
+        })
+        .from(chatGroups)
+        .innerJoin(groupMembers, eq(chatGroups.id, groupMembers.groupId))
+        .where(eq(groupMembers.userId, Number(userId)))
+        .orderBy(desc(chatGroups.createdAt));
     },
-    groupMessages: (_: unknown, { groupId, limit }: { groupId: string; limit?: number }, { user }: Context) => {
+    groupMessages: async (
+      _: unknown,
+      { groupId, limit }: { groupId: string; limit?: number },
+      { user }: Context
+    ) => {
       if (!user) throw new Error("Non authentifié");
-      const member = stmts.isGroupMember.get(groupId, user.id);
+      const member = await db
+        .select()
+        .from(groupMembers)
+        .where(and(eq(groupMembers.groupId, Number(groupId)), eq(groupMembers.userId, user.id)))
+        .then((r) => r[0]);
       if (!member) throw new Error("Accès refusé — tu n'es pas membre de ce groupe.");
-      return stmts.groupMessages.all(groupId, limit || 50).reverse();
+      const rows = await db
+        .select()
+        .from(groupMessages)
+        .where(eq(groupMessages.groupId, Number(groupId)))
+        .orderBy(desc(groupMessages.createdAt))
+        .limit(limit || 50);
+      return rows.reverse();
     },
   },
 
   Mutation: {
-    createGroup: (_: unknown, { name, memberIds }: { name: string; memberIds: number[] }, { user }: Context) => {
+    createGroup: async (
+      _: unknown,
+      { name, memberIds }: { name: string; memberIds: number[] },
+      { user }: Context
+    ) => {
       if (!user) throw new Error("Non authentifié");
-      const result = stmts.insertGroup.run(name, user.id);
-      const groupId = result.lastInsertRowid;
-      stmts.insertGroupMember.run(groupId, user.id, 1);
+      const [newGroup] = await db
+        .insert(chatGroups)
+        .values({ name, creatorId: user.id })
+        .returning();
+      const groupId = newGroup.id;
+      await db
+        .insert(groupMembers)
+        .values({ groupId, userId: user.id, isCreator: 1 })
+        .onConflictDoNothing();
       for (const mid of memberIds) {
         if (mid !== user.id) {
-          stmts.insertGroupMember.run(groupId, mid, 0);
+          await db
+            .insert(groupMembers)
+            .values({ groupId, userId: mid, isCreator: 0 })
+            .onConflictDoNothing();
         }
       }
-      return stmts.groupById.get(groupId);
+      const group = await db.select().from(chatGroups).where(eq(chatGroups.id, groupId)).then((r) => r[0]);
+      return { ...group, creator_id: group.creatorId, created_at: group.createdAt };
     },
 
-    addGroupMember: (_: unknown, { groupId, userId }: { groupId: string; userId: number }, { user }: Context) => {
+    addGroupMember: async (
+      _: unknown,
+      { groupId, userId }: { groupId: string; userId: number },
+      { user }: Context
+    ) => {
       if (!user) throw new Error("Non authentifié");
-      const group = stmts.groupById.get(groupId);
+      const group = await db.select().from(chatGroups).where(eq(chatGroups.id, Number(groupId))).then((r) => r[0]);
       if (!group) throw new Error("Groupe introuvable.");
-      const requester = stmts.isGroupMember.get(groupId, user.id);
+      const requester = await db
+        .select()
+        .from(groupMembers)
+        .where(and(eq(groupMembers.groupId, Number(groupId)), eq(groupMembers.userId, user.id)))
+        .then((r) => r[0]);
       if (!requester) throw new Error("Accès refusé — tu n'es pas membre de ce groupe.");
-      const u = stmts.userById.get(userId);
+      const u = await db.select().from(appUsers).where(eq(appUsers.id, userId)).then((r) => r[0]);
       if (!u) throw new Error("Utilisateur introuvable.");
-      stmts.insertGroupMember.run(groupId, userId, 0);
+      await db
+        .insert(groupMembers)
+        .values({ groupId: Number(groupId), userId, isCreator: 0 })
+        .onConflictDoNothing();
       return { user: u, isCreator: false, joinedAt: new Date().toISOString() };
     },
 
-    removeGroupMember: (_: unknown, { groupId, userId }: { groupId: string; userId: number }, { user }: Context) => {
+    removeGroupMember: async (
+      _: unknown,
+      { groupId, userId }: { groupId: string; userId: number },
+      { user }: Context
+    ): Promise<boolean> => {
       if (!user) throw new Error("Non authentifié");
-      const group = stmts.groupById.get(groupId) as ChatGroupResult | undefined;
+      const group = await db.select().from(chatGroups).where(eq(chatGroups.id, Number(groupId))).then((r) => r[0]);
       if (!group) throw new Error("Groupe introuvable.");
-      if (group.creator_id !== user.id && user.id !== Number(userId)) {
+      if (group.creatorId !== user.id && user.id !== Number(userId)) {
         throw new Error("Accès refusé — seul le créateur peut virer un membre, ou tu peux te retirer toi-même.");
       }
-      stmts.removeGroupMember.run(groupId, userId);
+      await db
+        .delete(groupMembers)
+        .where(and(eq(groupMembers.groupId, Number(groupId)), eq(groupMembers.userId, Number(userId))));
       return true;
     },
 
-    sendGroupMessage: (_: unknown, { text, groupId }: { text: string; groupId: string }, { user }: Context) => {
+    sendGroupMessage: async (
+      _: unknown,
+      { text, groupId }: { text: string; groupId: string },
+      { user }: Context
+    ) => {
       if (!user) throw new Error("Non authentifié");
-      const group = stmts.groupById.get(groupId) as ChatGroupResult | undefined;
+      const group = await db.select().from(chatGroups).where(eq(chatGroups.id, Number(groupId))).then((r) => r[0]);
       if (!group) throw new Error("Groupe introuvable.");
-      const member = stmts.isGroupMember.get(groupId, user.id);
+      const member = await db
+        .select()
+        .from(groupMembers)
+        .where(and(eq(groupMembers.groupId, Number(groupId)), eq(groupMembers.userId, user.id)))
+        .then((r) => r[0]);
       if (!member) throw new Error("Vous n'êtes pas membre de ce groupe.");
       const encrypted = encrypt(text);
-      const result = stmts.insertGroupMessage.run(encrypted, user.id, groupId);
-      const newMsg = stmts.groupMessageById.get(result.lastInsertRowid) as GroupMessageResult;
+      const [newMsg] = await db
+        .insert(groupMessages)
+        .values({
+          text: encrypted,
+          senderId: user.id,
+          groupId: Number(groupId),
+        })
+        .returning();
       const decrypted = { ...newMsg, text: decrypt(newMsg.text) };
       pubsub.publish(EVENTS.GROUP_MESSAGE_SENT, { groupMessageSent: decrypted });
       return decrypted;
@@ -143,13 +161,29 @@ export default {
   },
 
   ChatGroup: {
-    creator: (parent: { creator_id: number }) => stmts.userById.get(parent.creator_id),
-    members: (parent: { id: number }) => (stmts.groupMembers.all(parent.id) as GroupMemberResult[]).map((m) => ({
-      user: stmts.userById.get(m.user_id),
-      isCreator: !!m.is_creator,
-      joinedAt: m.joined_at,
-    })),
-    createdAt: (parent: { created_at: string }) => parent.created_at,
+    creator: async (parent: any) => {
+      return await db.select().from(appUsers).where(eq(appUsers.id, parent.creatorId || parent.creator_id)).then((r) => r[0]);
+    },
+    members: async (parent: any) => {
+      const rows = await db
+        .select({
+          user_id: groupMembers.userId,
+          name: appUsers.name,
+          email: appUsers.email,
+          last_seen: appUsers.lastSeen,
+          is_creator: groupMembers.isCreator,
+          joined_at: groupMembers.joinedAt,
+        })
+        .from(groupMembers)
+        .innerJoin(appUsers, eq(groupMembers.userId, appUsers.id))
+        .where(eq(groupMembers.groupId, parent.id));
+      return rows.map((m) => ({
+        user: { id: m.user_id, name: m.name, email: m.email, lastSeen: m.last_seen },
+        isCreator: !!m.is_creator,
+        joinedAt: m.joined_at,
+      }));
+    },
+    createdAt: (parent: any) => parent.created_at || parent.createdAt,
   },
 
   GroupMember: {
@@ -159,8 +193,13 @@ export default {
   },
 
   GroupMessage: {
-    sender: (parent: { sender_id: number }) => stmts.userById.get(parent.sender_id),
-    group: (parent: { group_id: number }) => stmts.groupById.get(parent.group_id),
-    createdAt: (parent: { created_at: string }) => parent.created_at,
+    sender: async (parent: any) => {
+      return await db.select().from(appUsers).where(eq(appUsers.id, parent.senderId || parent.sender_id)).then((r) => r[0]);
+    },
+    group: async (parent: any) => {
+      const result = await db.select().from(chatGroups).where(eq(chatGroups.id, parent.groupId || parent.group_id)).then((r) => r[0]);
+      return result ? { ...result, creator_id: result.creatorId, created_at: result.createdAt } : null;
+    },
+    createdAt: (parent: any) => parent.created_at || parent.createdAt,
   },
 };
