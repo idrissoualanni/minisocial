@@ -10,3 +10,4 @@ client/test-results/
 client/playwright-report/
 trace/
 .neon
+dist/

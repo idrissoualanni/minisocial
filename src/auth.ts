@@ -2,6 +2,8 @@
 import { betterAuth } from "better-auth";
 import pg from "pg";
 
+import { CORS_ORIGINS } from "./config/index.js";
+
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
@@ -37,10 +39,7 @@ export const auth = betterAuth({
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24,      // refresh every 24h
   },
-  trustedOrigins: [
-    "http://localhost:5173",
-    "http://localhost:4000",
-  ],
+  trustedOrigins: CORS_ORIGINS,
   advanced: {
     cookiePrefix: "minisocial",
   },

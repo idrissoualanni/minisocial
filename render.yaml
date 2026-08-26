@@ -1,0 +1,25 @@
+# Render Blueprint — MiniSocial
+# Déploiement : dashboard.render.com → New + → Blueprint → sélectionner ce repo
+services:
+  - type: web
+    name: minisocial
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/auth/get-session
+    envVars:
+      # Secrets à renseigner depuis le dashboard (valeur du .env local)
+      - key: DATABASE_URL
+        sync: false
+      - key: BETTER_AUTH_SECRET
+        sync: false
+      - key: MESSAGE_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      # URL finale https://minisocial.onrender.com (ajuster après 1er déploiement)
+      - key: BETTER_AUTH_URL
+        value: https://minisocial.onrender.com
+      - key: CORS_ORIGINS
+        value: https://minisocial.onrender.com,http://localhost:4000,http://localhost:5173
