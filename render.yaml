@@ -20,6 +20,6 @@ services:
         sync: false
       # URL finale https://minisocial.onrender.com (ajuster après 1er déploiement)
       - key: BETTER_AUTH_URL
-        value: https://minisocial.onrender.com
+        value: https://minisocial-85vy.onrender.com
       - key: CORS_ORIGINS
-        value: https://minisocial.onrender.com,http://localhost:4000,http://localhost:5173
+        value: https://minisocial-85vy.onrender.com,http://localhost:4000,http://localhost:5173
