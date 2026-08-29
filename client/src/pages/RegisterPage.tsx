@@ -1,6 +1,6 @@
 // client/src/pages/RegisterPage.jsx
 import { useState } from "react";
-import { signUp } from "../lib/auth-client";
+import { signUp, signIn } from "../lib/auth-client";
 import useStore from "../store";
 
 interface RegisterPageProps {
@@ -31,6 +31,13 @@ export default function RegisterPage({ onSwitchToLogin }: RegisterPageProps) {
       });
       if (error) {
         setError(error.message || "Erreur lors de l'inscription");
+        return;
+      }
+      // Better Auth ne pose pas de cookie au signup → auto-login explicite
+      const login = await signIn.email({ email, password });
+      if (login.error) {
+        showToast("Compte créé ! Connecte-toi maintenant.", "info");
+        onSwitchToLogin();
         return;
       }
       showToast(`Bienvenue ${data.user.name} !`);

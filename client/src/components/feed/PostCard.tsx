@@ -1,53 +1,23 @@
 // ============================================================
-// PostCard.jsx — Post avec édition, likes, commentaires threadés
-// Cache: cache.modify + optimisticResponse (pas de readQuery/map/writeQuery)
+// PostCard.tsx — Post avec édition, likes, commentaires threadés
+// Source de vérité: cache TanStack ['posts'] (usePosts / subs Apollo)
 // ============================================================
 
 import { useState } from "react";
-import { useMutation, useSubscription, useApolloClient } from "@apollo/client/react";
-import { gql, type Reference } from "@apollo/client";
+import { useSubscription } from "@apollo/client/react";
+import { gql } from "@apollo/client";
+import { useQueryClient } from "@tanstack/react-query";
 import CommentItem from "./CommentItem";
 import ImageCropModal from "../shared/ImageCropModal";
 import { getAvatarGradient, timeAgo } from "../../utils";
 import useStore from "../../store";
+import { useAddComment, useDeletePost, useUpdatePost, useToggleLike, type GetPostsData } from "../../hooks/usePostMutations";
 import type { Post } from "../../types";
 import type { User } from "../../store";
 
 interface PostCardProps {
   post: Post;
 }
-
-const ADD_COMMENT = gql`
-  mutation AddComment($text: String!, $postId: ID!, $parentId: ID) {
-    addComment(text: $text, postId: $postId, parentId: $parentId) {
-      id text createdAt
-      author { id name }
-      post { id }
-      parentId
-    }
-  }
-`;
-
-const DELETE_POST = gql`
-  mutation DeletePost($id: ID!) {
-    deletePost(id: $id)
-  }
-`;
-
-const UPDATE_POST = gql`
-  mutation UpdatePost($id: ID!, $title: String, $content: String, $imageUrl: String) {
-    updatePost(id: $id, title: $title, content: $content, imageUrl: $imageUrl) {
-      id title content imageUrl createdAt
-      author { id name }
-    }
-  }
-`;
-
-const TOGGLE_LIKE = gql`
-  mutation ToggleLike($postId: ID!) {
-    toggleLike(postId: $postId)
-  }
-`;
 
 const LIKE_TOGGLED = gql`
   subscription OnLikeToggled {
@@ -68,162 +38,46 @@ export default function PostCard({ post }: PostCardProps) {
   const [editContent, setEditContent] = useState<string>(post.content);
   const [editImageUrl, setEditImageUrl] = useState<string | null>(post.imageUrl || null);
   const [showCropModal, setShowCropModal] = useState<boolean>(false);
-  const { cache } = useApolloClient();
+  const queryClient = useQueryClient();
 
   const likedByMe = currentUser && post.likes?.some((u) => String(u.id) === String(currentUser.id));
   const likeCount = post.likeCount || 0;
 
-  // ── LIKE: optimistic + cache.modify chirurgical ──
-  const [toggleLike] = useMutation<{ toggleLike: boolean }>(TOGGLE_LIKE, {
-    optimisticResponse: {
-      toggleLike: !!likedByMe,
-    },
-    update: (cache, { data }) => {
-      const liked = data?.toggleLike ?? false;
-      // cache.modify cible directement l'objet Post:5 dans le cache
-      // Pas besoin de lire → mapper → réécrire toute la query GET_POSTS
-      const postId = cache.identify({ __typename: "Post", id: post.id });
-      cache.modify({
-        id: postId,
-        fields: {
-          likeCount: (existing = 0) => liked ? existing + 1 : existing - 1,
-          likes: (existingRefs = [], { readField }) => {
-            if (liked) {
-              // Ajouter une référence vers l'utilisateur courant
-              const userRef = cache.writeFragment({
-                data: { __typename: "User", id: currentUser!.id, name: currentUser!.name },
-                fragment: gql`fragment BriefUser on User { id name }`,
-              });
-              return [...existingRefs, userRef];
-            } else {
-              // Retirer la référence de l'utilisateur courant
-              return existingRefs.filter(
-                (ref: Reference) => String(readField("id", ref)) !== String(currentUser!.id)
-              );
-            }
-          },
-        },
-      });
-    },
-  });
+  // ── Mutations (TanStack) — mettent à jour le cache ['posts'] ──
+  const toggleLikeMutation = useToggleLike(currentUser);
+  const addCommentMutation = useAddComment();
+  const deletePostMutation = useDeletePost();
+  const updatePostMutation = useUpdatePost();
 
-  // ── LIKE subscription: met à jour le compteur si un autre like ──
+  // ── LIKE subscription: les likes des autres utilisateurs arrivent ici ──
   useSubscription(LIKE_TOGGLED, {
     onData: ({ data: { data } }) => {
       const evt = (data as Record<string, { postId: string; likeCount: number; userId: string }> | null)?.likeToggled;
       if (!evt || String(evt.postId) !== String(post.id)) return;
-      const postId = cache.identify({ __typename: "Post", id: post.id });
-      if (!postId) return;
-      cache.modify({
-        id: postId,
-        fields: {
-          likeCount: () => evt.likeCount,
-        },
+      queryClient.setQueryData<GetPostsData>(["posts"], (prev) => {
+        if (!prev) return prev;
+        return {
+          posts: prev.posts.map((p) => (p.id === post.id ? { ...p, likeCount: evt.likeCount } : p)),
+        };
       });
     },
   });
 
   const handleLike = async () => {
     if (!currentUser) { showToast("Sélectionne d'abord un utilisateur", "error"); return; }
-    await toggleLike({ variables: { postId: post.id } });
+    try {
+      await toggleLikeMutation.mutateAsync(String(post.id));
+    } catch (err) { showToast(err instanceof Error ? err.message : "Erreur", "error"); }
   };
-
-  // ── COMMENTAIRE: optimistic + cache.modify ──
-  const [addComment] = useMutation(ADD_COMMENT, {
-    optimisticResponse: {
-      addComment: {
-        __typename: "Comment" as const,
-        id: `temp-comment-${Date.now()}`,
-        text: commentText.trim(),
-        createdAt: new Date().toISOString(),
-        parentId: replyTo ? replyTo.id : null,
-        author: { __typename: "User" as const, id: currentUser!.id, name: currentUser!.name },
-        post: { __typename: "Post" as const, id: post.id },
-      },
-    },
-    update: (cache, { data }) => {
-      const newComment = (data as Record<string, { id: string; text: string; createdAt: string; parentId: string | null; author: { id: string; name: string }; post: { id: string } }> | null)?.addComment;
-      if (!newComment) return;
-      const postId = cache.identify({ __typename: "Post", id: post.id });
-      cache.modify({
-        id: postId,
-        fields: {
-          comments: (existingRefs = [], { readField }) => {
-            // Éviter les doublons (optimistic → réel)
-            const exists = existingRefs.some(
-              (ref: Reference) => String(readField("id", ref)) === String(newComment.id)
-            );
-            if (exists) return existingRefs;
-            const commentRef = cache.writeFragment({
-              data: newComment,
-              fragment: gql`fragment NewComment on Comment {
-                id text createdAt parentId
-                author { id name }
-                post { id }
-              }`,
-            });
-            return [...existingRefs, commentRef];
-          },
-        },
-      });
-    },
-  });
-
-  // ── SUPPRESSION: cache.modify evict ──
-  const [deletePost] = useMutation(DELETE_POST, {
-    optimisticResponse: { deletePost: true },
-    update: (cache) => {
-      // Retirer le post de la liste GET_POSTS
-      cache.modify({
-        fields: {
-          posts: (existingRefs = [], { readField }) => {
-            return existingRefs.filter(
-              (ref: Reference) => String(readField("id", ref)) !== String(post.id)
-            );
-          },
-        },
-      });
-    },
-  });
-
-  // ── ÉDITION: optimistic + cache.modify ──
-  const [updatePost] = useMutation(UPDATE_POST, {
-    optimisticResponse: {
-      updatePost: {
-        __typename: "Post" as const,
-        id: post.id,
-        title: editTitle.trim(),
-        content: editContent.trim(),
-        imageUrl: editImageUrl,
-        createdAt: post.createdAt,
-        author: post.author,
-      },
-    },
-    update: (cache, { data }) => {
-      const updated = (data as Record<string, { title: string; content: string; imageUrl: string | null }> | null)?.updatePost;
-      if (!updated) return;
-      const postId = cache.identify({ __typename: "Post", id: post.id });
-      cache.modify({
-        id: postId,
-        fields: {
-          title: () => updated.title,
-          content: () => updated.content,
-          imageUrl: () => updated.imageUrl,
-        },
-      });
-    },
-  });
 
   const handleSendComment = async () => {
     if (!currentUser) { showToast("Sélectionne d'abord un utilisateur", "error"); return; }
     if (!commentText.trim()) return;
     try {
-      await addComment({
-        variables: {
-          text: commentText.trim(),
-          postId: String(post.id),
-          parentId: replyTo ? replyTo.id : null,
-        },
+      await addCommentMutation.mutateAsync({
+        text: commentText.trim(),
+        postId: String(post.id),
+        parentId: replyTo ? replyTo.id : null,
       });
       setCommentText("");
       setReplyTo(null);
@@ -235,7 +89,7 @@ export default function PostCard({ post }: PostCardProps) {
     if (!currentUser) { showToast("Sélectionne d'abord un utilisateur", "error"); return; }
     if (!confirm("Supprimer cette publication ?")) return;
     try {
-      await deletePost({ variables: { id: String(post.id) } });
+      await deletePostMutation.mutateAsync(String(post.id));
       showToast("Publication supprimée");
     } catch (err) { showToast(err instanceof Error ? err.message : "Erreur", "error"); }
   };
@@ -243,12 +97,10 @@ export default function PostCard({ post }: PostCardProps) {
   const handleSaveEdit = async () => {
     if (!editTitle.trim() || !editContent.trim()) { showToast("Titre et contenu requis", "error"); return; }
     try {
-      await updatePost({
-        variables: {
-          id: String(post.id),
-          title: editTitle.trim(), content: editContent.trim(),
-          imageUrl: editImageUrl,
-        },
+      await updatePostMutation.mutateAsync({
+        id: String(post.id),
+        title: editTitle.trim(), content: editContent.trim(),
+        imageUrl: editImageUrl,
       });
       setEditing(false);
       showToast("Publication modifiée");

@@ -6,12 +6,13 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:4000',
     headless: true,
+    channel: 'chromium',
     screenshot: 'only-on-failure',
   },
   webServer: {
     command: 'cd .. && npx tsx src/server.ts',
     port: 4000,
     reuseExistingServer: true,
-    timeout: 15_000,
+    timeout: 45_000,
   },
 })

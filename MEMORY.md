@@ -65,3 +65,14 @@
 - [Retrait panneau Statistiques] → erreurs: aucun → fix: bloc supprimé de client/src/components/layout/Sidebar.tsx (lignes 16-37), liste Membres conservée. tsc ✅ vitest 2/2 ✅ build ✅
 - [Debug bug query posts] → erreurs: `Failed query select ... from posts` via GraphQL alors que SQL brute OK sur Neon ; test isolé Drizzle+pg.Pool SSL → RAW OK (config DB saine) ; serveur dev instable dans session bash (processus nohup tués entre appels, Start-Process PS non concluant) → fix: EN ATTENTE — prochaine étape logger `error.cause` (DrizzleQueryError) dans resolver/formatError pour voir l'erreur pg réelle
 - [Clarification bug app_users=0] → non-bug probable: contextFn lit les COOKIES (navigateur les envoie automatiquement), le Bearer curl était un artefact de test → table se remplira au premier login navigateur
+
+## Session: Corrections frontend (29 août 2026)
+
+- [Cause racine bug "Failed query" posts] → erreurs: .env jamais chargé par les scripts npm (DATABASE_URL absent → pg.Pool sans connectionString → DrizzleQueryError masquant) → fix: `tsx --env-file-if-exists=.env` dans scripts dev et start (package.json)
+- [Architecture mutations posts unifiée] → erreurs: lectures TanStack Query mais mutations Apollo cache jamais peuplé → cache.modify no-op silencieux (posts/likes/comments morts sans WS) → fix: NOUVEAU client/src/hooks/usePostMutations.ts (useCreatePost/useDeletePost/useUpdatePost/useAddComment/useToggleLike, cache ['posts'], sans optimistic), Composer.tsx + PostCard.tsx réécrits sur ces hooks, PostCard garde useSubscription(LIKE_TOGGLED) Apollo → setQueryData TanStack
+- [Subscriptions mortes en dev] → erreurs: proxy Vite '/graphql' sans ws:true → fix: ajout ws: true dans vite.config.js
+- [Parcours inscription cassé] → erreurs: signUp.email ne pose pas de cookie → reload → écran login → fix: auto-login signIn.email explicite après signup dans RegisterPage.tsx, fallback toast si login échoue
+- [ReactQueryDevtools en prod] → fix: conditionné à import.meta.env.DEV dans QueryProvider.tsx
+- [Champ mort store] → fix: toast: null supprimé de store.ts (interface + impl)
+- [Vérifications] → tsc frontend EXIT 0, vitest 2/2, vite build OK (chunk 560.09 kB/b 163.76 gzip warning), playwright e2e EXIT 0
+- [Déploiement] → commit + push master, redéploiement Render déclenché (service srv-da7i5kp42hec73btuks0)

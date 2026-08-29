@@ -38,8 +38,6 @@ interface StoreState {
   addToast: (msg: string, type?: string, duration?: number) => number;
   removeToast: (id: number) => void;
   showToast: (msg: string, type?: string) => void;
-
-  toast: null;
 }
 
 let toastId = 0;
@@ -91,8 +89,6 @@ const useStore = create<StoreState>()(
         const state = get();
         state.addToast(msg, type === "error" ? "error" : type === "success" ? "success" : "info", 3000);
       },
-
-      toast: null,
     }),
     {
       name: "minisocial-store",

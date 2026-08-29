@@ -1,42 +1,8 @@
 import { useState } from "react";
-import { useMutation } from "@apollo/client/react";
-import { gql } from "@apollo/client";
 import useStore from "../../store";
 import { getAvatarGradient } from "../../utils";
 import UploadImage from "../shared/UploadImage";
-import type { Post } from "@/types";
-
-interface CreatePostData {
-  createPost: Post;
-}
-
-interface PostsData {
-  posts: Post[];
-}
-
-const POST_FIELDS = `
-  id title content imageUrl createdAt
-  author { id name }
-  comments { id text createdAt parentId author { id name } }
-  likeCount
-  likes { id }
-`;
-
-const CREATE_POST = gql`
-  mutation CreatePost($title: String!, $content: String!, $imageUrl: String) {
-    createPost(title: $title, content: $content, imageUrl: $imageUrl) {
-      ${POST_FIELDS}
-    }
-  }
-`;
-
-const GET_POSTS = gql`
-  query GetPosts {
-    posts {
-      ${POST_FIELDS}
-    }
-  }
-`;
+import { useCreatePost } from "@/hooks/usePostMutations";
 
 export default function Composer() {
   const currentUser = useStore((s) => s.currentUser);
@@ -45,7 +11,7 @@ export default function Composer() {
   const [content, setContent] = useState("");
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
-  const [createPost] = useMutation<CreatePostData>(CREATE_POST);
+  const createPost = useCreatePost();
 
   const handleSubmit = async () => {
     if (!title.trim() || !content.trim()) return;
@@ -55,16 +21,10 @@ export default function Composer() {
     }
     setPublishing(true);
     try {
-      await createPost({
-        variables: { title: title.trim(), content: content.trim(), imageUrl: imagePreview || null },
-        update: (cache, { data }) => {
-          if (!data?.createPost) return;
-          const existing = cache.readQuery<PostsData>({ query: GET_POSTS });
-          cache.writeQuery({
-            query: GET_POSTS,
-            data: { posts: [data.createPost, ...(existing?.posts ?? [])] },
-          });
-        },
+      await createPost.mutateAsync({
+        title: title.trim(),
+        content: content.trim(),
+        imageUrl: imagePreview || null,
       });
       showToast("Publication partagée !");
       setTitle("");
