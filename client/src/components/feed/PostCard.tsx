@@ -168,7 +168,7 @@ export default function PostCard({ post }: PostCardProps) {
           {editImageUrl && (
             <div className="flex flex-col gap-1">
               <div className="relative overflow-hidden max-h-[200px]" style={{ borderRadius: "var(--radius-md)" }}>
-                <img src={editImageUrl} alt="Aperçu" className="w-full h-[200px] object-cover block" style={{ borderRadius: "var(--radius-md)" }} />
+                <img src={editImageUrl} alt="Aperçu de l'image en cours d'édition" className="w-full h-[200px] object-cover block" style={{ borderRadius: "var(--radius-md)" }} />
                 <button className="absolute bottom-2 right-2 flex items-center gap-1 py-1.5 px-3 border-none bg-black/65 text-white text-[0.78rem] font-semibold cursor-pointer backdrop-blur-[4px] transition-colors duration-200 hover:bg-black/85" onClick={() => setShowCropModal(true)} title="Rogner l'image">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">
                     <path d="M6.13 1L6 16a2 2 0 0 0 2 2h15"/>
@@ -203,27 +203,45 @@ export default function PostCard({ post }: PostCardProps) {
 
       {post.imageUrl && !editing && (
         <div className="mt-3 overflow-hidden" style={{ borderRadius: "var(--radius-sm)" }}>
-          <img src={post.imageUrl} alt="Image du post" className="w-full max-h-[500px] object-cover block" style={{ borderRadius: "var(--radius-sm)" }} />
+          <img
+            src={post.imageUrl}
+            alt={`Image de la publication : ${post.title}`}
+            loading="lazy"
+            className="w-full max-h-[500px] object-cover block"
+            style={{ borderRadius: "var(--radius-sm)", aspectRatio: "16 / 10" }}
+          />
         </div>
       )}
 
       <div style={{ borderTop: "1px solid var(--border)" }} className="flex items-center gap-5 mt-4 pt-3">
-        <button className={`flex items-center gap-1 bg-transparent border-none text-[0.8rem] cursor-pointer font-['Inter',inherit] font-medium transition-colors duration-150 hover:text-[var(--accent)] ${likedByMe ? "!text-[var(--error)]" : ""}`} style={{ color: likedByMe ? "var(--error)" : "var(--text-tertiary)" }} onClick={handleLike}>
-          <svg viewBox="0 0 24 24" fill={likedByMe ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+        <button
+          className={`flex items-center gap-1 bg-transparent border-none text-[0.8rem] cursor-pointer font-['Inter',inherit] font-medium transition-colors duration-150 hover:text-[var(--accent)] ${likedByMe ? "!text-[var(--error)]" : ""}`}
+          style={{ color: likedByMe ? "var(--error)" : "var(--text-tertiary)" }}
+          onClick={handleLike}
+          aria-label={likedByMe ? `Retirer mon like (${likeCount})` : `Liker cette publication (${likeCount})`}
+          aria-pressed={likedByMe ? "true" : "false"}
+        >
+          <svg viewBox="0 0 24 24" fill={likedByMe ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4" aria-hidden="true">
             <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
           </svg>
-          {likeCount > 0 && <span className="text-[0.75rem] font-bold">{likeCount}</span>}
+          {likeCount > 0 && <span className="text-[0.75rem] font-bold" aria-hidden="true">{likeCount}</span>}
         </button>
 
-        <button className={`flex items-center gap-1 bg-transparent border-none text-[0.8rem] cursor-pointer font-['Inter',inherit] font-medium transition-colors duration-150 hover:text-[var(--accent)] ${showComments ? "!text-[var(--accent)]" : ""}`} style={{ color: "var(--text-tertiary)" }} onClick={() => setShowComments(!showComments)}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+        <button
+          className={`flex items-center gap-1 bg-transparent border-none text-[0.8rem] cursor-pointer font-['Inter',inherit] font-medium transition-colors duration-150 hover:text-[var(--accent)] ${showComments ? "!text-[var(--accent)]" : ""}`}
+          style={{ color: "var(--text-tertiary)" }}
+          onClick={() => setShowComments(!showComments)}
+          aria-label={showComments ? "Masquer les commentaires" : `Afficher les commentaires (${post.comments.length})`}
+          aria-expanded={showComments}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4" aria-hidden="true">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
           </svg>
-          {post.comments.length}
+          <span aria-hidden="true">{post.comments.length}</span>
         </button>
 
-        <button className="flex items-center gap-1 bg-transparent border-none text-[0.8rem] cursor-pointer font-['Inter',inherit] font-medium transition-colors duration-150 hover:text-[var(--accent)]" style={{ color: "var(--text-tertiary)" }} onClick={handleShare} title="Partager">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+        <button className="flex items-center gap-1 bg-transparent border-none text-[0.8rem] cursor-pointer font-['Inter',inherit] font-medium transition-colors duration-150 hover:text-[var(--accent)]" style={{ color: "var(--text-tertiary)" }} onClick={handleShare} title="Partager" aria-label="Partager cette publication">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4" aria-hidden="true">
             <circle cx="18" cy="5" r="3"/>
             <circle cx="6" cy="12" r="3"/>
             <circle cx="18" cy="19" r="3"/>
@@ -233,8 +251,8 @@ export default function PostCard({ post }: PostCardProps) {
         </button>
 
         {isAuthor && (
-          <button className="flex items-center gap-1 bg-transparent border-none text-[0.8rem] cursor-pointer font-['Inter',inherit] font-medium transition-colors duration-150 hover:text-[var(--error)] ml-auto" style={{ color: "var(--text-tertiary)" }} onClick={handleDelete} title="Supprimer">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+          <button className="flex items-center gap-1 bg-transparent border-none text-[0.8rem] cursor-pointer font-['Inter',inherit] font-medium transition-colors duration-150 hover:text-[var(--error)] ml-auto" style={{ color: "var(--text-tertiary)" }} onClick={handleDelete} title="Supprimer" aria-label="Supprimer cette publication">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4" aria-hidden="true">
               <polyline points="3 6 5 6 21 6"/>
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
             </svg>

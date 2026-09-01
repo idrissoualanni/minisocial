@@ -12,9 +12,11 @@ import useStore from "../../store";
 import type { ConversationPreview, PendingRequest, ChatPermission, Group, Message } from "../../types";
 
 // ── Subscription: nouveaux messages pour unreadCount temps réel ──
+// (messageSentToUser : seul champ global du schéma ; l'ancien
+//  messageSentGlobal n'existait pas → subscription rejetée)
 const MESSAGE_SENT_GLOBAL_SUB = gql`
-  subscription OnMessageSentGlobal {
-    messageSentGlobal {
+  subscription OnMessageSentGlobal($userId: ID!) {
+    messageSentToUser(userId: $userId) {
       id text read createdAt
       sender { id name }
       receiver { id name }
@@ -154,11 +156,15 @@ export default function ChatLobby() {
   // ── Temps réel: unreadCount se met à jour quand un message arrive ──
   const { cache } = useApolloClient();
   useSubscription(MESSAGE_SENT_GLOBAL_SUB, {
+    variables: { userId: currentUser?.id },
     skip: !currentUser,
     onData: ({ data: { data } }) => {
       const typed = data as Record<string, Message> | null;
       const msg = typed?.messageSentToUser ?? typed?.messageSent;
       if (!msg) return;
+      if (!currentUser) return;
+      // Ne pas incrémenter pour les messages qu'on vient d'envoyer soi-même
+      if (String(msg.sender.id) === String(currentUser.id)) return;
       // Incrémenter unreadCount dans le cache pour cette conversation
       const senderId = String(msg.sender.id);
       const receiverId = String(msg.receiver.id);
@@ -195,14 +201,24 @@ export default function ChatLobby() {
       const typed = data as Record<string, { messageId: string; senderId: string; receiverId: string }> | null;
       const evt = typed?.messageRead;
       if (!evt) return;
-      // Si quelqu'un a lu nos messages, mettre à jour le preview
+      if (!currentUser) return;
+      // Quand MOI je lis les messages (receiverId = moi), mon
+      // unreadCount pour cette conversation retombe à 0.
+      if (String(evt.receiverId) !== String(currentUser.id)) return;
       const existingData = cache.readQuery<PreviewsData>({
         query: GET_PREVIEWS,
         variables: { userId: currentUser?.id },
       });
       if (!existingData?.conversationPreviews) return;
-      // Note: on ne décrémente pas car unreadCount est du côté du receiver
-      // Le receiver voit son unreadCount diminuer quand IL lit
+      cache.writeQuery<PreviewsData>({
+        query: GET_PREVIEWS,
+        variables: { userId: currentUser?.id },
+        data: {
+          conversationPreviews: existingData.conversationPreviews.map((p: ConversationPreview) =>
+            String(p.user.id) === String(evt.senderId) ? { ...p, unreadCount: 0 } : p
+          ),
+        },
+      });
     },
   });
 

@@ -43,7 +43,9 @@ export default function Composer() {
   return (
     <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", boxShadow: "var(--shadow-xs)" }} className="p-6 mb-6 transition-shadow duration-200 hover:shadow-[var(--shadow-sm)]">
       <div className="flex gap-4 items-center mb-4">
+        <label htmlFor="composer-title" className="visually-hidden">Titre de la publication</label>
         <input
+          id="composer-title"
           type="text"
           placeholder="Titre de ta publication..."
           maxLength={120}
@@ -54,10 +56,12 @@ export default function Composer() {
         />
       </div>
       <div className="flex gap-4 items-start">
-        <div className="w-8 h-8 rounded-full grid place-items-center font-bold text-[0.7rem] text-white shrink-0" style={{ background: avatarBg }}>
+        <div className="w-8 h-8 rounded-full grid place-items-center font-bold text-[0.7rem] text-white shrink-0" style={{ background: avatarBg }} aria-hidden="true">
           {currentUser ? currentUser.name.charAt(0) : "?"}
         </div>
+        <label htmlFor="composer-content" className="visually-hidden">Contenu de la publication</label>
         <textarea
+          id="composer-content"
           placeholder="Quoi de neuf ?"
           rows={2}
           value={content}
@@ -78,12 +82,16 @@ export default function Composer() {
         </span>
         <button
           style={{ background: "var(--accent)", color: "#fff" }}
-          className="py-2 px-6 border-none rounded-full text-[0.82rem] font-bold cursor-pointer transition-all duration-200 font-['Inter',inherit] hover:-translate-y-px active:translate-y-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
+          className="flex items-center justify-center gap-2 py-2 px-6 border-none rounded-full text-[0.82rem] font-bold cursor-pointer transition-all duration-200 font-['Inter',inherit] hover:-translate-y-px hover:bg-[var(--accent-hover)] active:translate-y-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
           onClick={handleSubmit}
           disabled={publishing || !currentUser}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--accent-hover)")}
-          onMouseLeave={(e) => (e.currentTarget.style.background = "var(--accent)")}
+          aria-busy={publishing}
         >
+          {publishing && (
+            <svg className="btn-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" width="14" height="14" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+            </svg>
+          )}
           {publishing ? "Publication..." : "Publier"}
         </button>
       </div>

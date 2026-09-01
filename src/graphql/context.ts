@@ -3,9 +3,11 @@ import type { IncomingMessage } from "http";
 import type { Response } from "express";
 import { auth } from "../auth.js";
 import { ensureAppUser, type AppUser } from "../db/index.js";
+import { createLoaders, type Loaders } from "./loaders.js";
 
 export interface Context {
   user: AppUser | null;
+  loaders: Loaders;
 }
 
 export async function getUserFromRequest(req: IncomingMessage): Promise<AppUser | null> {
@@ -22,7 +24,7 @@ export async function getUserFromRequest(req: IncomingMessage): Promise<AppUser 
 
 export async function contextFn({ req }: { req: IncomingMessage }): Promise<Context> {
   const user = await getUserFromRequest(req);
-  return { user };
+  return { user, loaders: createLoaders() };
 }
 
 interface AuthenticatedRequest extends IncomingMessage {

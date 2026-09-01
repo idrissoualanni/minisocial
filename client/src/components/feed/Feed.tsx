@@ -94,20 +94,66 @@ export default function Feed() {
     return () => sub.unsubscribe();
   }, [queryClient, notify]);
 
-  if (isLoading) return <div className="text-center py-12 px-4" style={{ color: "var(--text-tertiary)" }}><p>Chargement...</p></div>;
-  if (isError) return <div className="text-center py-12 px-4" style={{ color: "var(--error)" }}><p>Erreur: {error.message}</p></div>;
+  if (isLoading) {
+    return (
+      <>
+        <Composer />
+        <div className="flex flex-col gap-5" role="status" aria-label="Chargement des publications">
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)" }}
+              className="p-6"
+              aria-hidden="true"
+            >
+              <div className="flex items-center gap-3 mb-3">
+                <div className="skeleton skeleton-avatar" />
+                <div className="flex flex-col gap-1.5 flex-1">
+                  <div className="skeleton skeleton-line" style={{ width: "35%" }} />
+                  <div className="skeleton skeleton-line" style={{ width: "18%", height: "10px" }} />
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <div className="skeleton skeleton-line" style={{ width: "70%" }} />
+                <div className="skeleton skeleton-line" />
+                <div className="skeleton skeleton-line" style={{ width: "45%" }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </>
+    );
+  }
+  if (isError) return (
+    <div className="text-center py-12 px-4" style={{ color: "var(--error)" }} role="alert">
+      <p>Erreur : {error.message}</p>
+    </div>
+  );
+
+  const posts = data?.posts || [];
 
   return (
     <>
       <Composer />
-      <div className="flex flex-col gap-5">
-        {data?.posts.map((post) => (
-          <PostCard
-            key={post.id}
-            post={post}
-          />
-        ))}
-      </div>
+      {posts.length === 0 ? (
+        <div className="text-center py-16 px-4" style={{ color: "var(--text-tertiary)" }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="48" height="48" className="mx-auto mb-4 opacity-40" aria-hidden="true">
+            <path d="M12 3a9 9 0 0 1 9 9 9 9 0 0 1-9 9 9 9 0 0 1-9-9 9 9 0 0 1 9-9z"/>
+            <path d="M8 12h8M12 8v8"/>
+          </svg>
+          <p className="text-[0.95rem] font-semibold mb-1" style={{ color: "var(--text-secondary)" }}>Aucune publication pour l'instant</p>
+          <p className="text-[0.82rem]">Sois la première personne à partager quelque chose !</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-5">
+          {posts.map((post) => (
+            <PostCard
+              key={post.id}
+              post={post}
+            />
+          ))}
+        </div>
+      )}
     </>
   );
 }

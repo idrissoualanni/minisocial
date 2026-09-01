@@ -5,6 +5,7 @@ import { appUsers, chatGroups, groupMembers, groupMessages } from "../../db/sche
 import { eq, and, desc } from "drizzle-orm";
 import { pubsub, EVENTS } from "../pubsub.js";
 import { encrypt, decrypt } from "../../utils/crypto.js";
+import { isoDate } from "../serialize.js";
 
 export default {
   Query: {
@@ -54,22 +55,24 @@ export default {
       { user }: Context
     ) => {
       if (!user) throw new Error("Non authentifié");
+      if (!name.trim()) throw new Error("Nom de groupe requis.");
       const [newGroup] = await db
         .insert(chatGroups)
-        .values({ name, creatorId: user.id })
+        .values({ name: name.trim(), creatorId: user.id })
         .returning();
       const groupId = newGroup.id;
       await db
         .insert(groupMembers)
         .values({ groupId, userId: user.id, isCreator: 1 })
         .onConflictDoNothing();
-      for (const mid of memberIds) {
-        if (mid !== user.id) {
-          await db
-            .insert(groupMembers)
-            .values({ groupId, userId: mid, isCreator: 0 })
-            .onConflictDoNothing();
-        }
+      const validMembers = [...new Set(memberIds.map(Number))].filter(
+        (mid) => Number.isFinite(mid) && mid !== user.id
+      );
+      if (validMembers.length > 0) {
+        await db
+          .insert(groupMembers)
+          .values(validMembers.map((mid) => ({ groupId, userId: mid, isCreator: 0 })))
+          .onConflictDoNothing();
       }
       const group = await db.select().from(chatGroups).where(eq(chatGroups.id, groupId)).then((r) => r[0]);
       return { ...group, creator_id: group.creatorId, created_at: group.createdAt };
@@ -151,7 +154,8 @@ export default {
           [Symbol.asyncIterator]: async function* () {
             const iter = pubsub.asyncIterableIterator([EVENTS.GROUP_MESSAGE_SENT]) as AsyncIterableIterator<any>;
             for await (const event of iter) {
-              if (String(event.groupMessageSent.group_id) === String(groupId)) yield event;
+              // Drizzle renvoie groupId (camelCase) — l'ancien group_id ne matchait jamais
+              if (String(event.groupMessageSent.groupId) === String(groupId)) yield event;
             }
           },
         };
@@ -161,29 +165,20 @@ export default {
   },
 
   ChatGroup: {
-    creator: async (parent: any) => {
-      return await db.select().from(appUsers).where(eq(appUsers.id, parent.creatorId || parent.creator_id)).then((r) => r[0]);
+    creator: async (parent: any, _args: unknown, { loaders }: Context) => {
+      const creatorId = parent.creatorId ?? parent.creator_id;
+      return await loaders.userById.load(creatorId);
     },
-    members: async (parent: any) => {
-      const rows = await db
-        .select({
-          user_id: groupMembers.userId,
-          name: appUsers.name,
-          email: appUsers.email,
-          last_seen: appUsers.lastSeen,
-          is_creator: groupMembers.isCreator,
-          joined_at: groupMembers.joinedAt,
-        })
-        .from(groupMembers)
-        .innerJoin(appUsers, eq(groupMembers.userId, appUsers.id))
-        .where(eq(groupMembers.groupId, parent.id));
-      return rows.map((m) => ({
-        user: { id: m.user_id, name: m.name, email: m.email, lastSeen: m.last_seen },
-        isCreator: !!m.is_creator,
-        joinedAt: m.joined_at,
+    // Batché : 1 requête pour les membres de N groupes
+    members: async (parent: any, _args: unknown, { loaders }: Context) => {
+      const rows = await loaders.groupMembersByGroupId.load(parent.id);
+      return rows.map(({ row, user }) => ({
+        user,
+        isCreator: !!row.isCreator,
+        joinedAt: isoDate(row.joinedAt),
       }));
     },
-    createdAt: (parent: any) => parent.created_at || parent.createdAt,
+    createdAt: (parent: any) => isoDate(parent.created_at || parent.createdAt),
   },
 
   GroupMember: {
@@ -193,13 +188,15 @@ export default {
   },
 
   GroupMessage: {
-    sender: async (parent: any) => {
-      return await db.select().from(appUsers).where(eq(appUsers.id, parent.senderId || parent.sender_id)).then((r) => r[0]);
+    sender: async (parent: any, _args: unknown, { loaders }: Context) => {
+      const senderId = parent.senderId ?? parent.sender_id;
+      return await loaders.userById.load(senderId);
     },
     group: async (parent: any) => {
-      const result = await db.select().from(chatGroups).where(eq(chatGroups.id, parent.groupId || parent.group_id)).then((r) => r[0]);
+      const groupId = parent.groupId ?? parent.group_id;
+      const result = await db.select().from(chatGroups).where(eq(chatGroups.id, groupId)).then((r) => r[0]);
       return result ? { ...result, creator_id: result.creatorId, created_at: result.createdAt } : null;
     },
-    createdAt: (parent: any) => parent.created_at || parent.createdAt,
+    createdAt: (parent: any) => isoDate(parent.created_at || parent.createdAt),
   },
 };

@@ -13,9 +13,12 @@ const wsLink = typeof window !== 'undefined'
   ? new GraphQLWsLink(
       createClient({
         url: WS_URL,
-        connectionParams: () => ({
-          cookies: document.cookie,
-        }),
+        connectionParams: () => {
+          // Better Auth lit l'entête "cookie" (singulier) — l'ancien
+          // "cookies" ne pouvait jamais authentifier la WS.
+          const cookie = typeof document !== 'undefined' ? document.cookie : ''
+          return cookie ? { cookie } : {}
+        },
       })
     )
   : null

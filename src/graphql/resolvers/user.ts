@@ -2,7 +2,8 @@ import type { Context } from "../context.js";
 import type { AppUser } from "../../db/index.js";
 import { db } from "../../db/drizzle-client.js";
 import { appUsers, posts } from "../../db/schema.js";
-import { eq, and, count as drizzleCount, desc } from "drizzle-orm";
+import { eq, ne, and, count as drizzleCount, desc } from "drizzle-orm";
+import { validate, UpdateUserSchema } from "../../utils/validation.js";
 
 export default {
   Query: {
@@ -29,26 +30,36 @@ export default {
       if (user.id !== Number(id)) {
         throw new Error("Accès refusé — tu ne peux modifier que ton propre profil.");
       }
+      const data = validate(UpdateUserSchema, {
+        id,
+        name: name ?? undefined,
+        email: email ?? undefined,
+        bio: bio ?? undefined,
+      });
       const existing = await db
         .select()
         .from(appUsers)
         .where(eq(appUsers.id, Number(id)))
         .then((r) => r[0]);
       if (!existing) throw new Error("Utilisateur introuvable.");
-      if (email && email !== existing.email) {
+
+      // Anti-doublon : l'ancien code cherchait (email = X AND id = moi),
+      // c'est-à-dire soi-même → "email déjà utilisé" systématique.
+      // On cherche maintenant l'email chez les AUTRES utilisateurs.
+      if (data.email && data.email !== existing.email) {
         const dup = await db
           .select({ id: appUsers.id })
           .from(appUsers)
-          .where(and(eq(appUsers.email, email), eq(appUsers.id, Number(id))))
+          .where(and(eq(appUsers.email, data.email), ne(appUsers.id, Number(id))))
           .then((r) => r[0]);
         if (dup) throw new Error("Cet email est déjà utilisé.");
       }
       await db
         .update(appUsers)
         .set({
-          name: name || existing.name,
-          email: email || existing.email,
-          bio: bio ?? existing.bio ?? "",
+          name: data.name || existing.name,
+          email: data.email || existing.email,
+          bio: data.bio ?? existing.bio ?? "",
         })
         .where(eq(appUsers.id, Number(id)));
       const updated = await db.select().from(appUsers).where(eq(appUsers.id, Number(id))).then((r) => r[0]);
@@ -57,16 +68,11 @@ export default {
   },
 
   User: {
-    posts: async (parent: AppUser) => {
-      return await db.select().from(posts).where(eq(posts.authorId, parent.id)).orderBy(desc(posts.createdAt));
+    posts: async (parent: AppUser, _args: unknown, { loaders }: Context) => {
+      return await loaders.postsByAuthorId.load(parent.id);
     },
-    postCount: async (parent: AppUser): Promise<number> => {
-      const result = await db
-        .select({ count: drizzleCount() })
-        .from(posts)
-        .where(eq(posts.authorId, parent.id))
-        .then((r) => r[0]);
-      return Number(result.count);
+    postCount: async (parent: AppUser, _args: unknown, { loaders }: Context): Promise<number> => {
+      return await loaders.postCountByUserId.load(parent.id);
     },
     role: (parent: AppUser): string => parent.bio !== undefined ? (parent as any).role || "user" : "user",
     isOnline: (parent: AppUser): boolean => {

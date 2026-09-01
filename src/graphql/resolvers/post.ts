@@ -2,8 +2,11 @@ import type { Context } from "../context.js";
 import type { AppUser } from "../../db/index.js";
 import { db } from "../../db/drizzle-client.js";
 import { appUsers, posts, comments, postLikes } from "../../db/schema.js";
-import { eq, and, desc, count as drizzleCount } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import { pubsub, EVENTS } from "../pubsub.js";
+import { validate, CreatePostSchema, UpdatePostSchema, AddCommentSchema } from "../../utils/validation.js";
+import { isoDate } from "../serialize.js";
+import type { Loaders } from "../loaders.js";
 import natural from "natural";
 
 export default {
@@ -16,9 +19,16 @@ export default {
       return result || null;
     },
 
+    // Recherche TF-IDF : auteurs chargés en 1 seule requête (anti-N+1)
     search: async (_: unknown, { query }: { query: string }) => {
       const allPosts = await db.select().from(posts).orderBy(desc(posts.createdAt));
       if (allPosts.length === 0) return [];
+
+      const authorRows = await db
+        .select({ id: appUsers.id, name: appUsers.name })
+        .from(appUsers)
+        .where(inArray(appUsers.id, allPosts.map((p) => p.authorId)));
+      const authorNames = new Map(authorRows.map((r) => [r.id, r.name]));
 
       const tokenizer = new natural.WordTokenizer();
       const stemmer = natural.PorterStemmerFr;
@@ -34,12 +44,8 @@ export default {
       };
 
       for (const post of allPosts) {
-        const authorResult = await db
-          .select()
-          .from(appUsers)
-          .where(eq(appUsers.id, post.authorId))
-          .then((r) => r[0]);
-        const fullText = `${post.title} ${post.content} ${authorResult ? authorResult.name : ""}`;
+        const authorName = authorNames.get(post.authorId) ?? "";
+        const fullText = `${post.title} ${post.content} ${authorName}`;
         tfidf.addDocument(processText(fullText));
       }
 
@@ -60,13 +66,14 @@ export default {
       { user }: Context
     ) => {
       if (!user) throw new Error("Non authentifié");
+      const data = validate(CreatePostSchema, { title, content, imageUrl: imageUrl ?? null });
       const [newPost] = await db
         .insert(posts)
         .values({
-          title,
-          content,
+          title: data.title,
+          content: data.content,
           authorId: user.id,
-          imageUrl: imageUrl || null,
+          imageUrl: data.imageUrl || null,
         })
         .returning();
       pubsub.publish(EVENTS.POST_CREATED, { postCreated: newPost });
@@ -84,12 +91,18 @@ export default {
       if (post.authorId !== user.id) {
         throw new Error("Vous ne pouvez modifier que vos propres posts.");
       }
+      const data = validate(UpdatePostSchema, {
+        id,
+        title: title ?? undefined,
+        content: content ?? undefined,
+        imageUrl: imageUrl ?? undefined,
+      });
       await db
         .update(posts)
         .set({
-          title: title || post.title,
-          content: content || post.content,
-          imageUrl: imageUrl !== undefined ? imageUrl : post.imageUrl,
+          title: data.title || post.title,
+          content: data.content || post.content,
+          imageUrl: data.imageUrl !== undefined ? data.imageUrl : post.imageUrl,
         })
         .where(eq(posts.id, Number(id)));
       const updated = await db.select().from(posts).where(eq(posts.id, Number(id))).then((r) => r[0]);
@@ -113,19 +126,20 @@ export default {
       { user }: Context
     ) => {
       if (!user) throw new Error("Non authentifié");
+      const data = validate(AddCommentSchema, { text, postId, parentId: parentId ?? null });
       const post = await db.select().from(posts).where(eq(posts.id, Number(postId))).then((r) => r[0]);
       if (!post) throw new Error("Ce post n'existe pas.");
-      if (parentId) {
-        const parent = await db.select().from(comments).where(eq(comments.id, Number(parentId))).then((r) => r[0]);
+      if (data.parentId) {
+        const parent = await db.select().from(comments).where(eq(comments.id, Number(data.parentId))).then((r) => r[0]);
         if (!parent) throw new Error("Le commentaire parent n'existe pas.");
       }
       const [newComment] = await db
         .insert(comments)
         .values({
-          text,
+          text: data.text,
           authorId: user.id,
           postId: Number(postId),
-          parentId: parentId ? Number(parentId) : null,
+          parentId: data.parentId ? Number(data.parentId) : null,
         })
         .returning();
       pubsub.publish(EVENTS.COMMENT_ADDED, { commentAdded: newComment });
@@ -150,11 +164,10 @@ export default {
           .onConflictDoNothing();
       }
       const countResult = await db
-        .select({ count: drizzleCount() })
+        .select({ userId: postLikes.userId })
         .from(postLikes)
-        .where(eq(postLikes.postId, Number(postId)))
-        .then((r) => r[0]);
-      const count = Number(countResult.count);
+        .where(eq(postLikes.postId, Number(postId)));
+      const count = countResult.length;
       pubsub.publish(EVENTS.LIKE_TOGGLED, {
         likeToggled: { postId: String(postId), likeCount: count, userId: String(user.id) },
       });
@@ -173,7 +186,8 @@ export default {
             [Symbol.asyncIterator]: async function* () {
               const iter = pubsub.asyncIterableIterator([EVENTS.COMMENT_ADDED]) as AsyncIterableIterator<any>;
               for await (const event of iter) {
-                if (String((event as any).commentAdded.post_id) === String(postId)) yield event;
+                // Drizzle renvoie postId (camelCase) — l'ancien post_id ne matchait jamais
+                if (String((event as any).commentAdded.postId) === String(postId)) yield event;
               }
             },
           };
@@ -189,50 +203,36 @@ export default {
   },
 
   Post: {
-    author: async (parent: any) => {
-      const result = await db.select().from(appUsers).where(eq(appUsers.id, parent.authorId)).then((r) => r[0]);
-      return result;
+    // Batché : 1 requête pour tous les posts d'une même opération
+    author: async (parent: any, _args: unknown, { loaders }: Context) => {
+      return await loaders.userById.load(parent.authorId);
     },
-    comments: async (parent: any) => {
-      return await db
-        .select()
-        .from(comments)
-        .where(and(eq(comments.postId, parent.id), eq(comments.parentId, null as any)))
-        .orderBy(comments.createdAt);
+    comments: async (parent: any, _args: unknown, { loaders }: Context) => {
+      return await loaders.rootCommentsByPostId.load(parent.id);
     },
-    likeCount: async (parent: any): Promise<number> => {
-      const result = await db
-        .select({ count: drizzleCount() })
-        .from(postLikes)
-        .where(eq(postLikes.postId, parent.id))
-        .then((r) => r[0]);
-      return Number(result.count);
+    likeCount: async (parent: any, _args: unknown, { loaders }: Context): Promise<number> => {
+      return await loaders.likeCountByPostId.load(parent.id);
     },
-    likes: async (parent: any) => {
-      return await db
-        .select({ userId: postLikes.userId })
-        .from(postLikes)
-        .where(eq(postLikes.postId, parent.id));
+    // Retourne de vrais objets utilisateur ({id, name}) — l'ancien resolver
+    // renvoyait des {userId} bruts alors que le schéma exige [User!]!
+    likes: async (parent: any, _args: unknown, { loaders }: Context) => {
+      return await loaders.likesByPostId.load(parent.id);
     },
     imageUrl: (parent: any) => parent.imageUrl || null,
-    createdAt: (parent: any) => parent.createdAt,
+    createdAt: (parent: any) => isoDate(parent.createdAt),
   },
 
   Comment: {
-    author: async (parent: any) => {
-      return await db.select().from(appUsers).where(eq(appUsers.id, parent.authorId)).then((r) => r[0]);
+    author: async (parent: any, _args: unknown, { loaders }: Context) => {
+      return await loaders.userById.load(parent.authorId);
     },
     post: async (parent: any) => {
       return await db.select().from(posts).where(eq(posts.id, parent.postId)).then((r) => r[0]);
     },
     parentId: (parent: any) => parent.parentId,
-    createdAt: (parent: any) => parent.createdAt,
-    replies: async (parent: any) => {
-      return await db
-        .select()
-        .from(comments)
-        .where(eq(comments.parentId, parent.id))
-        .orderBy(comments.createdAt);
+    createdAt: (parent: any) => isoDate(parent.createdAt),
+    replies: async (parent: any, _args: unknown, { loaders }: Context) => {
+      return await loaders.repliesByCommentId.load(parent.id);
     },
   },
 };

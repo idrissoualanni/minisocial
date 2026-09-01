@@ -2,9 +2,11 @@ import type { Context } from "../context.js";
 import type { AppUser } from "../../db/index.js";
 import { db } from "../../db/drizzle-client.js";
 import { appUsers, messages, chatPermissions } from "../../db/schema.js";
-import { eq, or, and, desc, count as drizzleCount, sql } from "drizzle-orm";
+import { eq, or, and, desc, inArray, sql } from "drizzle-orm";
 import { pubsub, EVENTS } from "../pubsub.js";
 import { encrypt, decrypt } from "../../utils/crypto.js";
+import { validate, SendMessageSchema } from "../../utils/validation.js";
+import { isoDate } from "../serialize.js";
 
 function decryptMessage(msg: any) {
   return { ...msg, text: decrypt(msg.text) };
@@ -91,59 +93,63 @@ export default {
         );
     },
 
+    // Optimisé : 3 requêtes au total (tous les users, tous les non-lus,
+    // dernier message par partenaire via DISTINCT ON) au lieu de 3×N requêtes.
     conversationPreviews: async (_: unknown, { userId }: { userId: string }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
       if (user.id !== Number(userId)) {
         throw new Error("Accès refusé — tu ne peux voir que tes propres conversations.");
       }
+      const uid = Number(userId);
+
+      // 1) Tous les autres utilisateurs
       const allUsers = await db.select().from(appUsers).orderBy(appUsers.id);
-      const others = allUsers.filter((u) => u.id !== Number(userId));
 
-      const previews = await Promise.all(
-        others.map(async (other) => {
-          const fromOther = await db
-            .select()
-            .from(messages)
-            .where(and(eq(messages.senderId, other.id), eq(messages.receiverId, Number(userId))))
-            .orderBy(desc(messages.createdAt))
-            .limit(1)
-            .then((r) => r[0]);
+      // 2) Non-lus groupés par expéditeur : 1 requête
+      const unreadRows = await db
+        .select({ senderId: messages.senderId, n: sql<number>`count(*)::int` })
+        .from(messages)
+        .where(and(eq(messages.receiverId, uid), eq(messages.read, 0)))
+        .groupBy(messages.senderId);
+      const unreadBySender = new Map(unreadRows.map((r) => [r.senderId, Number(r.n)]));
 
-          const fromMe = await db
-            .select()
-            .from(messages)
-            .where(and(eq(messages.senderId, Number(userId)), eq(messages.receiverId, other.id)))
-            .orderBy(desc(messages.createdAt))
-            .limit(1)
-            .then((r) => r[0]);
+      // 3) Dernier message par partenaire : 1 requête (DISTINCT ON)
+      const lastMsgResult = await db.execute(sql`
+        SELECT DISTINCT ON (partner) id, text, sender_id, receiver_id, read, created_at, partner
+        FROM (
+          SELECT m.id, m.text, m.sender_id, m.receiver_id, m.read, m.created_at,
+            CASE WHEN m.sender_id = ${uid} THEN m.receiver_id ELSE m.sender_id END AS partner
+          FROM messages m
+          WHERE m.sender_id = ${uid} OR m.receiver_id = ${uid}
+        ) sub
+        ORDER BY partner, created_at DESC
+      `);
+      const lastMsgRows = (lastMsgResult as any).rows ?? (lastMsgResult as any);
+      const lastByPartner = new Map<number, any>();
+      for (const row of lastMsgRows as any[]) {
+        lastByPartner.set(Number(row.partner), row);
+      }
 
-          let lastMessage: any = null;
-          if (fromOther && fromMe) {
-            const otherTime = fromOther.createdAt instanceof Date ? fromOther.createdAt.getTime() : new Date(fromOther.createdAt as any).getTime();
-            const meTime = fromMe.createdAt instanceof Date ? fromMe.createdAt.getTime() : new Date(fromMe.createdAt as any).getTime();
-            lastMessage = otherTime > meTime ? fromOther : fromMe;
-          } else {
-            lastMessage = fromOther || fromMe || null;
-          }
-          if (lastMessage) lastMessage = decryptMessage(lastMessage);
-
-          const unreadResult = await db
-            .select({ count: drizzleCount() })
-            .from(messages)
-            .where(
-              and(
-                eq(messages.senderId, other.id),
-                eq(messages.receiverId, Number(userId)),
-                eq(messages.read, 0)
-              )
-            )
-            .then((r) => r[0]);
-
-          return { user: other, lastMessage, unreadCount: Number(unreadResult.count) };
-        })
-      );
-
-      return previews;
+      return allUsers
+        .filter((u) => u.id !== uid)
+        .map((other) => {
+          const raw = lastByPartner.get(other.id) || null;
+          const lastMessage = raw
+            ? decryptMessage({
+                id: raw.id,
+                text: raw.text,
+                senderId: Number(raw.sender_id),
+                receiverId: Number(raw.receiver_id),
+                read: raw.read,
+                createdAt: isoDate(raw.created_at),
+              })
+            : null;
+          return {
+            user: other,
+            lastMessage,
+            unreadCount: unreadBySender.get(other.id) ?? 0,
+          };
+        });
     },
   },
 
@@ -154,16 +160,17 @@ export default {
       { user }: Context
     ) => {
       if (!user) throw new Error("Non authentifié");
-      const receiver = await db.select().from(appUsers).where(eq(appUsers.id, Number(receiverId))).then((r) => r[0]);
+      const data = validate(SendMessageSchema, { text, receiverId });
+      const receiver = await db.select().from(appUsers).where(eq(appUsers.id, Number(data.receiverId))).then((r) => r[0]);
       if (!receiver) throw new Error("Le destinataire n'existe pas.");
-      if (user.id === Number(receiverId)) throw new Error("Vous ne pouvez pas vous écrire à vous-même.");
+      if (user.id === Number(data.receiverId)) throw new Error("Vous ne pouvez pas vous écrire à vous-même.");
       const perm = await db
         .select()
         .from(chatPermissions)
         .where(
           or(
-            and(eq(chatPermissions.senderId, user.id), eq(chatPermissions.receiverId, Number(receiverId))),
-            and(eq(chatPermissions.senderId, Number(receiverId)), eq(chatPermissions.receiverId, user.id))
+            and(eq(chatPermissions.senderId, user.id), eq(chatPermissions.receiverId, Number(data.receiverId))),
+            and(eq(chatPermissions.senderId, Number(data.receiverId)), eq(chatPermissions.receiverId, user.id))
           )
         )
         .limit(1)
@@ -171,13 +178,13 @@ export default {
       if (!perm || perm.status !== "accepted") {
         throw new Error("Vous devez d'abord obtenir l'autorisation.");
       }
-      const encrypted = encrypt(text);
+      const encrypted = encrypt(data.text);
       const [newMessage] = await db
         .insert(messages)
         .values({
           text: encrypted,
           senderId: user.id,
-          receiverId: Number(receiverId),
+          receiverId: Number(data.receiverId),
         })
         .returning();
       const decrypted = decryptMessage(newMessage);
@@ -186,23 +193,21 @@ export default {
       return decrypted;
     },
 
+    // Batché : 1 UPDATE ... WHERE id IN (...) RETURNING au lieu de
+    // 2 requêtes (update + select) par message.
     markAsRead: async (_: unknown, { messageIds }: { messageIds: string[] }, { user }: Context): Promise<boolean> => {
       if (!user) throw new Error("Non authentifié");
-      await db.transaction(async (tx) => {
-        for (const id of messageIds) {
-          await tx
-            .update(messages)
-            .set({ read: 1 })
-            .where(and(eq(messages.id, Number(id)), eq(messages.receiverId, user.id)));
-        }
-      });
-      for (const id of messageIds) {
-        const msg = await db.select().from(messages).where(eq(messages.id, Number(id))).then((r) => r[0]);
-        if (msg && msg.receiverId === user.id) {
-          pubsub.publish(EVENTS.MESSAGE_READ, {
-            messageRead: { messageId: String(id), senderId: msg.senderId, receiverId: msg.receiverId },
-          });
-        }
+      const ids = messageIds.map((id) => Number(id)).filter((n) => Number.isFinite(n));
+      if (ids.length === 0) return true;
+      const updated = await db
+        .update(messages)
+        .set({ read: 1 })
+        .where(and(inArray(messages.id, ids), eq(messages.receiverId, user.id)))
+        .returning();
+      for (const msg of updated) {
+        pubsub.publish(EVENTS.MESSAGE_READ, {
+          messageRead: { messageId: String(msg.id), senderId: msg.senderId, receiverId: msg.receiverId },
+        });
       }
       return true;
     },
@@ -321,6 +326,9 @@ export default {
   },
 
   Subscription: {
+    // Filtres corrigés : Drizzle renvoie senderId/receiverId (camelCase).
+    // L'ancien code comparait sender_id/receiver_id (snake_case) qui
+    // n'existaient pas → undefined → aucune livraison temps réel.
     messageSent: {
       subscribe: (_: unknown, { userId1, userId2 }: { userId1: string; userId2: string }) => {
         const ids = new Set([String(userId1), String(userId2)]);
@@ -329,7 +337,7 @@ export default {
             const iter = pubsub.asyncIterableIterator([EVENTS.MESSAGE_SENT]) as AsyncIterableIterator<any>;
             for await (const event of iter) {
               const msg = event.messageSent;
-              if (ids.has(String(msg.sender_id)) && ids.has(String(msg.receiver_id))) yield event;
+              if (ids.has(String(msg.senderId)) && ids.has(String(msg.receiverId))) yield event;
             }
           },
         };
@@ -343,7 +351,7 @@ export default {
             const iter = pubsub.asyncIterableIterator([EVENTS.MESSAGE_SENT_TO_USER]) as AsyncIterableIterator<any>;
             for await (const event of iter) {
               const msg = event.messageSentToUser;
-              if (String(msg.receiver_id) === String(userId)) yield event;
+              if (String(msg.receiverId) === String(userId)) yield event;
             }
           },
         };
@@ -357,7 +365,7 @@ export default {
             const iter = pubsub.asyncIterableIterator([EVENTS.CHAT_PERMISSION_UPDATED]) as AsyncIterableIterator<any>;
             for await (const event of iter) {
               const perm = event.chatPermissionUpdated;
-              if (String(perm.sender_id) === String(userId) || String(perm.receiver_id) === String(userId)) yield event;
+              if (String(perm.senderId) === String(userId) || String(perm.receiverId) === String(userId)) yield event;
             }
           },
         };
@@ -395,24 +403,24 @@ export default {
   },
 
   Message: {
-    sender: async (parent: any) => {
-      return await db.select().from(appUsers).where(eq(appUsers.id, parent.senderId)).then((r) => r[0]);
+    sender: async (parent: any, _args: unknown, { loaders }: Context) => {
+      return await loaders.userById.load(parent.senderId);
     },
-    receiver: async (parent: any) => {
-      return await db.select().from(appUsers).where(eq(appUsers.id, parent.receiverId)).then((r) => r[0]);
+    receiver: async (parent: any, _args: unknown, { loaders }: Context) => {
+      return await loaders.userById.load(parent.receiverId);
     },
-    createdAt: (parent: any) => parent.createdAt,
+    createdAt: (parent: any) => isoDate(parent.createdAt),
   },
 
   ChatPermission: {
-    sender: async (parent: any) => {
-      return await db.select().from(appUsers).where(eq(appUsers.id, parent.senderId)).then((r) => r[0]);
+    sender: async (parent: any, _args: unknown, { loaders }: Context) => {
+      return await loaders.userById.load(parent.senderId);
     },
-    receiver: async (parent: any) => {
-      return await db.select().from(appUsers).where(eq(appUsers.id, parent.receiverId)).then((r) => r[0]);
+    receiver: async (parent: any, _args: unknown, { loaders }: Context) => {
+      return await loaders.userById.load(parent.receiverId);
     },
-    createdAt: (parent: any) => parent.createdAt,
-    updatedAt: (parent: any) => parent.updatedAt,
+    createdAt: (parent: any) => isoDate(parent.createdAt),
+    updatedAt: (parent: any) => isoDate(parent.updatedAt),
   },
 
   ConversationPreview: {

@@ -11,11 +11,25 @@ export function getAvatarGradient(id: string): string {
   return AVATAR_GRADIENTS[(parseInt(id) - 1) % AVATAR_GRADIENTS.length];
 }
 
+/**
+ * Parse une date serveur en objet Date.
+ * Accepte l'ISO 8601 (résolvers actuels, ex. "2026-08-29T18:00:00.000Z")
+ * ET l'ancien format SQLite "YYYY-MM-DD HH:MM:SS" interprété comme UTC
+ * (données historiques / caches persistés éventuels).
+ */
+export function parseServerDate(dateStr: string | null | undefined): Date | null {
+  if (!dateStr) return null;
+  const raw = dateStr.includes("T")
+    ? dateStr
+    : dateStr.trim().replace(" ", "T") + "Z";
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 export function timeAgo(dateStr: string | null | undefined): string {
-  if (!dateStr) return "";
-  const now = new Date();
-  const d = new Date(dateStr.replace(" ", "T") + "Z");
-  const diff = Math.floor((now.getTime() - d.getTime()) / 1000);
+  const d = parseServerDate(dateStr);
+  if (!d) return "";
+  const diff = Math.floor((Date.now() - d.getTime()) / 1000);
   if (diff < 60) return "à l'instant";
   if (diff < 3600) return `il y a ${Math.floor(diff / 60)} min`;
   if (diff < 86400) return `il y a ${Math.floor(diff / 3600)}h`;

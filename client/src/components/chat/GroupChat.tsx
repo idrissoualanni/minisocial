@@ -5,7 +5,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation, useSubscription, useApolloClient } from "@apollo/client/react";
 import { gql } from "@apollo/client";
-import { getAvatarGradient, timeAgo } from "../../utils";
+import { getAvatarGradient, timeAgo, parseServerDate } from "../../utils";
 import useStore from "../../store";
 import type { Group, User } from "@/types";
 
@@ -62,9 +62,8 @@ const GROUP_MSG_SUB = gql`
 `;
 
 function formatTime(isoStr: string): string {
-  if (!isoStr) return "";
-  const d = new Date(isoStr.replace(" ", "T") + "Z");
-  if (isNaN(d.getTime())) return "";
+  const d = parseServerDate(isoStr);
+  if (!d) return "";
   return d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 

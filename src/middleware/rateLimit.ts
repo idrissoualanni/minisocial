@@ -1,29 +1,13 @@
-// src/middleware/rateLimit.js
+// src/middleware/rateLimit.ts
 import rateLimit from "express-rate-limit";
 
-// Global: 200 requêtes / 15 min par IP
+// Global : 1000 requêtes / 15 min par IP.
+// L'ancienne valeur (200) était traversée par le seul heartbeat
+// toutes les 15 s (96 req) + usage normal → blocage en ~10 min.
 export const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Trop de requêtes, réessayez dans 15 minutes." },
-});
-
-// Auth: 10 tentatives / 15 min par IP
-export const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Trop de tentatives, réessayez dans 15 minutes." },
-});
-
-// Chat: 60 messages / 15 min par IP (keyGenerator par défaut = req.ip)
-export const chatLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 60,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Limite de messages atteinte." },
 });

@@ -1,10 +1,11 @@
 import type { Context } from "../context.js";
 import type { AppUser } from "../../db/index.js";
 import { db } from "../../db/drizzle-client.js";
-import { appUsers, meetings, meetingParticipants } from "../../db/schema.js";
-import { eq, and } from "drizzle-orm";
+import { appUsers, meetings, meetingParticipants, chatPermissions } from "../../db/schema.js";
+import { eq, and, or } from "drizzle-orm";
 import { pubsub, EVENTS } from "../pubsub.js";
-import { validate, CreateMeetingSchema } from "../../utils/validation.js";
+import { validate, CreateMeetingSchema, JoinMeetingSchema } from "../../utils/validation.js";
+import { isoDate } from "../serialize.js";
 
 interface MeetingInvitedEvent {
   meetingId: string;
@@ -36,6 +37,30 @@ export default {
     createMeeting: async (_: unknown, args: { title: string; targetUserId?: string }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
       const data = validate(CreateMeetingSchema, { title: args.title });
+
+      // Sécurité : on ne peut inviter qu'un utilisateur avec qui on a une
+      // permission de chat acceptée (l'ancien code invitait n'importe qui).
+      if (args.targetUserId) {
+        const targetId = Number(args.targetUserId);
+        if (targetId === user.id) throw new Error("Vous ne pouvez pas vous appeler vous-même.");
+        const target = await db.select().from(appUsers).where(eq(appUsers.id, targetId)).then((r) => r[0]);
+        if (!target) throw new Error("L'utilisateur invité n'existe pas.");
+        const perm = await db
+          .select()
+          .from(chatPermissions)
+          .where(
+            or(
+              and(eq(chatPermissions.senderId, user.id), eq(chatPermissions.receiverId, targetId)),
+              and(eq(chatPermissions.senderId, targetId), eq(chatPermissions.receiverId, user.id))
+            )
+          )
+          .limit(1)
+          .then((r) => r[0]);
+        if (!perm || perm.status !== "accepted") {
+          throw new Error("Vous devez être autorisés à discuter avant d'appeler cet utilisateur.");
+        }
+      }
+
       const [newMeeting] = await db
         .insert(meetings)
         .values({ title: data.title, creatorId: user.id })
@@ -64,6 +89,7 @@ export default {
 
     joinMeeting: async (_: unknown, { meetingId }: { meetingId: string }, { user }: Context) => {
       if (!user) throw new Error("Non authentifié");
+      validate(JoinMeetingSchema, { meetingId });
       await db
         .insert(meetingParticipants)
         .values({ meetingId: Number(meetingId), userId: user.id })
@@ -157,25 +183,16 @@ export default {
   },
 
   Meeting: {
-    creator: async (parent: any) => {
-      return await db.select().from(appUsers).where(eq(appUsers.id, parent.creatorId || parent.creator_id)).then((r) => r[0]);
+    creator: async (parent: any, _args: unknown, { loaders }: Context) => {
+      return await loaders.userById.load(parent.creatorId || parent.creator_id);
     },
-    participants: async (parent: any) => {
-      return await db
-        .select({
-          id: appUsers.id,
-          name: appUsers.name,
-          email: appUsers.email,
-          lastSeen: appUsers.lastSeen,
-          baUserId: appUsers.baUserId,
-          createdAt: appUsers.createdAt,
-          bio: appUsers.bio,
-        })
-        .from(appUsers)
-        .innerJoin(meetingParticipants, eq(appUsers.id, meetingParticipants.userId))
-        .where(eq(meetingParticipants.meetingId, parent.id));
+    // Batché : ids participants de N meetings en 1 requête, puis 1 requête users
+    participants: async (parent: any, _args: unknown, { loaders }: Context) => {
+      const ids = await loaders.meetingParticipantIdsByMeetingId.load(parent.id);
+      const users = await Promise.all(ids.map((id: number) => loaders.userById.load(id)));
+      return users.filter(Boolean);
     },
     isActive: (parent: any) => !!parent.isActive,
-    createdAt: (parent: any) => parent.createdAt,
+    createdAt: (parent: any) => isoDate(parent.createdAt),
   },
 };
