@@ -1,5 +1,5 @@
 // client/src/App.tsx
-import { useQuery, useSubscription } from "@apollo/client/react";
+import { useSubscription } from "@apollo/client/react";
 import { gql } from "@apollo/client";
 import useStore from "./store";
 import { useSession, signOut } from "./lib/auth-client";
@@ -11,7 +11,6 @@ import Chat from "./components/chat/Chat";
 import GroupChat from "./components/chat/GroupChat";
 import Profile from "./components/profile/Profile";
 import Search from "./components/search/Search";
-import Sidebar from "./components/layout/Sidebar";
 import Toast from "./components/shared/Toast";
 import Meeting from "./components/meeting/Meeting";
 import IncomingCall from "./components/meeting/IncomingCall";
@@ -28,12 +27,6 @@ interface IncomingCall {
   fromUser?: { id: string; name: string };
   toUserId: string;
 }
-
-const GET_USERS = gql`
-  query GetUsers {
-    users { id name email postCount isOnline }
-  }
-`;
 
 const MEETING_INVITED_SUB = gql`
   subscription OnMeetingInvited($userId: ID!) {
@@ -75,8 +68,6 @@ export default function App() {
   useNotificationSetup();
   useHeartbeat(currentUser ?? null);
   useSystemNotifications();
-
-  useQuery(GET_USERS, { skip: !currentUser });
 
   // --- Subscription appel entrant ---
   useSubscription<{ meetingInvited: IncomingCall }>(MEETING_INVITED_SUB, {
@@ -123,16 +114,14 @@ export default function App() {
       <Header user={currentUser} onSignOut={signOut} />
 
       {view === "feed" && (
-        <div className="max-w-[1120px] mx-auto grid grid-cols-[1fr_300px] gap-8 p-6 max-[860px]:grid-cols-1">
+        <div className="max-w-[720px] mx-auto p-6">
           <main className="min-w-0"><Feed /></main>
-          <aside className="flex flex-col gap-5 max-[860px]:order-[-1]"><Sidebar /></aside>
         </div>
       )}
 
       {view === "search" && (
-        <div className="max-w-[1120px] mx-auto grid grid-cols-[1fr_300px] gap-8 p-6 max-[860px]:grid-cols-1">
+        <div className="max-w-[720px] mx-auto p-6">
           <main className="min-w-0"><Search /></main>
-          <aside className="flex flex-col gap-5 max-[860px]:order-[-1]"><Sidebar /></aside>
         </div>
       )}
 
