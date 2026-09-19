@@ -15,6 +15,7 @@ export const EVENTS = {
   MEETING_SIGNAL: "MEETING_SIGNAL",
   MEETING_UPDATED: "MEETING_UPDATED",
   MEETING_INVITED: "MEETING_INVITED",
+  FOLLOW_UPDATED: "FOLLOW_UPDATED",
 } as const;
 
 export type EventName = (typeof EVENTS)[keyof typeof EVENTS];

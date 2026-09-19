@@ -2,69 +2,50 @@
 // crypto.ts — Chiffrement AES-256-GCM des messages
 // ============================================================
 
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "crypto";
-import { readFileSync, writeFileSync, existsSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-const ENV_PATH = join(__dirname, "..", "..", ".env");
-
-function loadKey(): string {
-  if (process.env.MESSAGE_SECRET) return process.env.MESSAGE_SECRET;
-
-  if (existsSync(ENV_PATH)) {
-    const content = readFileSync(ENV_PATH, "utf-8");
-    const match = content.match(/^MESSAGE_SECRET=(.+)$/m);
-    if (match) return match[1].trim();
-  }
-
-  const key = randomBytes(32).toString("hex");
-  const envLine = `MESSAGE_SECRET=${key}\n`;
-  writeFileSync(ENV_PATH, envLine, { flag: "a" });
-  console.log("🔑 Clé de chiffrement générée dans .env");
-  return key;
+const KEY_HEX = process.env.MESSAGE_ENCRYPTION_KEY;
+if (!KEY_HEX || KEY_HEX.length !== 64) {
+  throw new Error('MESSAGE_ENCRYPTION_KEY doit contenir 64 caractères hex (32 bytes). Générer : openssl rand -hex 32');
 }
-
-const SECRET: string = loadKey();
-const KEY: Buffer = scryptSync(SECRET, "minisocial-salt-v1", 32);
+const KEY = Buffer.from(KEY_HEX, 'hex');
 const ALGO = "aes-256-gcm" as const;
 
 export function encrypt(plaintext: string): string {
-  const iv = randomBytes(16);
+  const iv = randomBytes(12);
   const cipher = createCipheriv(ALGO, KEY, iv);
 
-  let encrypted = cipher.update(plaintext, "utf-8", "hex");
-  encrypted += cipher.final("hex");
+  let encrypted = cipher.update(plaintext, "utf-8", "base64");
+  encrypted += cipher.final("base64");
 
-  const authTag = cipher.getAuthTag().toString("hex");
+  const authTag = cipher.getAuthTag().toString("base64");
 
-  return `${iv.toString("hex")}:${authTag}:${encrypted}`;
+  return `${iv.toString("base64")}:${authTag}:${encrypted}`;
 }
 
 export function decrypt(ciphertext: string): string {
   try {
-    const [ivHex, authTagHex, encrypted] = ciphertext.split(":");
+    const [ivB64, authTagB64, encrypted] = ciphertext.split(":");
+    if (!ivB64 || !authTagB64 || !encrypted) return ciphertext; // legacy ou corrompu
 
-    const iv = Buffer.from(ivHex, "hex");
-    const authTag = Buffer.from(authTagHex, "hex");
+    const iv = Buffer.from(ivB64, "base64");
+    const authTag = Buffer.from(authTagB64, "base64");
 
     const decipher = createDecipheriv(ALGO, KEY, iv);
     decipher.setAuthTag(authTag);
 
-    let decrypted = decipher.update(encrypted, "hex", "utf-8");
+    let decrypted = decipher.update(Buffer.from(encrypted, "base64"), undefined, "utf-8");
     decrypted += decipher.final("utf-8");
 
     return decrypted;
   } catch (err) {
     console.error("⚠️ Échec du déchiffrement:", (err as Error).message);
-    return "[message corrompu]";
+    return ciphertext; // retourne brut si échec (ne jamais crasher)
   }
 }
 
 export function isEncrypted(value: unknown): value is string {
   if (typeof value !== "string") return false;
   const parts = value.split(":");
-  return parts.length === 3 && parts.every((p) => /^[0-9a-f]+$/i.test(p));
+  return parts.length === 3 && parts.every((p) => p.length > 0);
 }
