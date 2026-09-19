@@ -1,13 +1,40 @@
+```
+# Dependencies
 node_modules/
-src/social.db*
-client/dist/
-.env
-.env.*
-nul
 
-# Playwright & outils
-client/test-results/
-client/playwright-report/
-trace/
-.neon
+# Environment
+.env
+.env.local
+*.env.*
+
+# Logs
+*.log
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Build artifacts
 dist/
+build/
+target/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Testing
+.vitest/
+```

@@ -3,6 +3,7 @@ import post from "./post.js";
 import chat from "./chat.js";
 import group from "./group.js";
 import meeting from "./meeting.js";
+import follow from "./follow.js";
 
 function mergeResolverObjects(sources: any[], key: string): Record<string, any> | undefined {
   const merged: Record<string, any> = {};
@@ -14,7 +15,7 @@ function mergeResolverObjects(sources: any[], key: string): Record<string, any> 
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-const sources = [user, post, chat, group, meeting];
+const sources = [user, post, chat, group, meeting, follow];
 
 const resolvers = {
   Query: mergeResolverObjects(sources, "Query"),

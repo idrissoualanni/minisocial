@@ -4,6 +4,7 @@
 
 import {
   boolean,
+  check as pgCheck,
   integer,
   pgTable,
   primaryKey,
@@ -13,6 +14,7 @@ import {
   unique,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
+import { sql as drizzleSql } from "drizzle-orm";
 import { relations } from "drizzle-orm";
 
 // ============================================================
@@ -376,4 +378,36 @@ export const sessionRelations = relations(session, ({ one }) => ({
 
 export const accountRelations = relations(account, ({ one }) => ({
   user: one(user, { fields: [account.userId], references: [user.id] }),
+}));
+
+// ============================================================
+// follows (système d'abonnement)
+// ============================================================
+export const follows = pgTable(
+  "follows",
+  {
+    followerId: integer("follower_id")
+      .notNull()
+      .references(() => appUsers.id, { onDelete: "cascade" }),
+    followingId: integer("following_id")
+      .notNull()
+      .references(() => appUsers.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.followerId, t.followingId] }),
+    // Contrainte: on ne peut pas se suivre soi-même
+    pgCheck("no_self_follow", drizzleSql`${t.followerId} <> ${t.followingId}`),
+  ]
+);
+
+export const followsRelations = relations(follows, ({ one }) => ({
+  follower: one(appUsers, {
+    fields: [follows.followerId],
+    references: [appUsers.id],
+  }),
+  following: one(appUsers, {
+    fields: [follows.followingId],
+    references: [appUsers.id],
+  }),
 }));
